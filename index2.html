@@ -78,21 +78,20 @@
       padding: 14px 32px;
       font-size: 16px;
       font-weight: 600;
-      color: #ffffff;
-      background-color: #1e1e24;
-      border: 1px solid #363640;
+      color: #0a0a0a;
+      background-color: #ffffff;
+      border: 1px solid #ffffff;
       border-radius: 8px;
       cursor: pointer;
       outline: none;
-      transition: background-color 0.15s ease, transform 0.1s ease, opacity 0.15s ease, border-color 0.15s ease;
+      transition: background-color 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
       display: inline-flex;
       align-items: center;
       justify-content: center;
     }
 
     .btn:hover:not(:disabled) {
-      background-color: #2b2b36;
-      border-color: #50505c;
+      background-color: #e5e5e5;
       transform: translateY(-1px);
     }
 
@@ -217,11 +216,16 @@
           'index.html',
           'GameMetadata.json',
           'public/game-sw.js',
-          'src/style.css',
-          'src/app.js',
-          'src/cacheManager.js',
-          'src/githubDownloader.js',
-          'src/gamePlayer.js'
+          'src/App.tsx',
+          'src/main.tsx',
+          'src/types.ts',
+          'src/utils/cacheManager.ts',
+          'src/utils/githubDownloader.ts',
+          'src/components/GamePlayer.tsx',
+          'src/components/DownloadScreen.tsx',
+          'src/components/GameCard.tsx',
+          'src/components/Header.tsx',
+          'src/components/CacheManagerModal.tsx'
         ];
 
         for (const c of core) {

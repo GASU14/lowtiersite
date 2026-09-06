@@ -1,13 +1,13 @@
-// LowTierSite - Native Cache Manager (IndexedDB + CacheStorage)
+import { CachedGameMeta, EngineType } from '../types';
 
 export const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const DB_NAME = 'LowTeirGamesDB';
 const DB_VERSION = 1;
 const CACHE_NAME = 'lowteir-games-v1';
 
-let cachedDbPromise = null;
+let cachedDbPromise: Promise<IDBDatabase> | null = null;
 
-export function openDB() {
+function openDB(): Promise<IDBDatabase> {
   if (cachedDbPromise) {
     return cachedDbPromise;
   }
@@ -37,15 +37,24 @@ export function openDB() {
   return cachedDbPromise;
 }
 
-export function slugifyGame(name) {
-  return (name || '')
+export function slugifyGame(name: string): string {
+  return name
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
 
-export function parseGitHubRepoUrl(url, explicitEntry, explicitSubPath) {
+export interface ParsedRepoInfo {
+  owner: string;
+  repo: string;
+  branch: string;
+  subPath: string;
+  entryPoint: string;
+  baseHref: string;
+}
+
+export function parseGitHubRepoUrl(url: string, explicitEntry?: string, explicitSubPath?: string): ParsedRepoInfo {
   let clean = (url || '').replace(/\.git$/, '').trim();
 
   // 1. Check for tree/branch/subpath URL (e.g. https://github.com/irv77/hd_fnaf/tree/main/1)
@@ -56,7 +65,7 @@ export function parseGitHubRepoUrl(url, explicitEntry, explicitSubPath) {
     let branch = treeMatch[3] || 'main';
     let subPath = (treeMatch[4] || explicitSubPath || '').replace(/^\/+|\/+$/g, '');
 
-    // Common repo redirects / mirrors
+    // Aliases
     if (repo === 'ULTRAKILL' && owner === 'teker821') {
       owner = 'MoltenWolf85';
       repo = 'UK-web';
@@ -106,8 +115,8 @@ export function parseGitHubRepoUrl(url, explicitEntry, explicitSubPath) {
   return { owner, repo, branch, subPath, entryPoint, baseHref };
 }
 
-export function detectEngine(filePaths) {
-  const pathsLower = (filePaths || []).map((p) => p.toLowerCase());
+export function detectEngine(filePaths: string[]): EngineType {
+  const pathsLower = filePaths.map((p) => p.toLowerCase());
   const isUnity = pathsLower.some(
     (p) =>
       p.includes('loader.js') ||
@@ -126,17 +135,22 @@ export function detectEngine(filePaths) {
   return 'html5';
 }
 
-export function detectEntryPoint(filePaths) {
-  if (!filePaths || !filePaths.length) return 'index.html';
+export function detectEntryPoint(filePaths: string[]): string {
+  // Check exact root index.html first
   if (filePaths.includes('index.html')) return 'index.html';
+
+  // Check any index.html
   const anyIndex = filePaths.find((p) => p.toLowerCase().endsWith('index.html'));
   if (anyIndex) return anyIndex;
+
+  // Check any .html
   const anyHtml = filePaths.find((p) => p.toLowerCase().endsWith('.html') && !p.toLowerCase().includes('readme'));
   if (anyHtml) return anyHtml;
+
   return 'index.html';
 }
 
-export async function initServiceWorker() {
+export async function initServiceWorker(): Promise<boolean> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     return false;
   }
@@ -145,15 +159,19 @@ export async function initServiceWorker() {
     await navigator.serviceWorker.ready;
     return true;
   } catch (err) {
-    console.warn('[LowTierSite] Service Worker note:', err);
+    console.warn('[LowTeirSite] Service Worker registration failed:', err);
     return false;
   }
 }
 
-export async function checkGameCache(gameId) {
+export async function checkGameCache(gameId: string): Promise<{
+  cached: boolean;
+  meta?: CachedGameMeta;
+  daysRemaining?: number;
+}> {
   try {
     const db = await openDB();
-    const meta = await new Promise((resolve) => {
+    const meta: CachedGameMeta | undefined = await new Promise((resolve) => {
       const tx = db.transaction('game_meta', 'readonly');
       const store = tx.objectStore('game_meta');
       const req = store.get(gameId);
@@ -167,6 +185,7 @@ export async function checkGameCache(gameId) {
 
     const now = Date.now();
     if (now > meta.expiresAt) {
+      // Expired! Clean up automatically
       await deleteGameCache(gameId);
       return { cached: false };
     }
@@ -185,11 +204,15 @@ export async function checkGameCache(gameId) {
   }
 }
 
-export async function saveDownloadedGame(gameId, meta, files) {
+export async function saveDownloadedGame(
+  gameId: string,
+  meta: CachedGameMeta,
+  files: Map<string, { blob: Blob; mimeType: string }>
+): Promise<void> {
   const db = await openDB();
 
   // Save meta
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('game_meta', 'readwrite');
     const store = tx.objectStore('game_meta');
     const req = store.put(meta);
@@ -197,12 +220,12 @@ export async function saveDownloadedGame(gameId, meta, files) {
     req.onerror = () => reject(req.error);
   });
 
-  // Save files in batches to prevent transaction timeouts
+  // Save files in batches to prevent huge transaction timeouts and maximize disk throughput
   const entries = Array.from(files.entries());
   const batchSize = 50;
   for (let i = 0; i < entries.length; i += batchSize) {
     const slice = entries.slice(i, i + batchSize);
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('game_files', 'readwrite');
       const store = tx.objectStore('game_files');
       for (const [filePath, fileData] of slice) {
@@ -221,7 +244,7 @@ export async function saveDownloadedGame(gameId, meta, files) {
     });
   }
 
-  // Also populate CacheStorage for instant service worker matching
+  // Also populate CacheStorage in concurrent batches for instant service worker matching
   if ('caches' in window) {
     try {
       const cache = await caches.open(CACHE_NAME);
@@ -246,15 +269,15 @@ export async function saveDownloadedGame(gameId, meta, files) {
         );
       }
     } catch (e) {
-      console.warn('CacheStorage sync note:', e);
+      console.warn('CacheStorage sync skipped:', e);
     }
   }
 }
 
-export async function getAllCachedGames() {
+export async function getAllCachedGames(): Promise<CachedGameMeta[]> {
   try {
     const db = await openDB();
-    const metas = await new Promise((resolve) => {
+    const metas: CachedGameMeta[] = await new Promise((resolve) => {
       const tx = db.transaction('game_meta', 'readonly');
       const store = tx.objectStore('game_meta');
       const req = store.getAll();
@@ -263,7 +286,7 @@ export async function getAllCachedGames() {
     });
 
     const now = Date.now();
-    const valid = [];
+    const valid: CachedGameMeta[] = [];
     for (const m of metas) {
       if (now > m.expiresAt) {
         await deleteGameCache(m.id);
@@ -278,31 +301,31 @@ export async function getAllCachedGames() {
   }
 }
 
-export async function getCachedFile(gameId, filePath) {
+export async function getCachedFile(gameId: string, filePath: string): Promise<Blob | null> {
   try {
     const db = await openDB();
-    const record = await new Promise((resolve) => {
+    const record = await new Promise<any>((resolve) => {
       const tx = db.transaction('game_files', 'readonly');
       const store = tx.objectStore('game_files');
       const req = store.get(`${gameId}:${filePath}`);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
     });
-    return record ? record.blob : null;
+    return record?.blob || null;
   } catch (err) {
     return null;
   }
 }
 
-export async function getGameFiles(gameId) {
-  const result = new Map();
+export async function getGameFiles(gameId: string): Promise<Map<string, { blob: Blob; mimeType: string }>> {
+  const result = new Map<string, { blob: Blob; mimeType: string }>();
   try {
     const db = await openDB();
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const tx = db.transaction('game_files', 'readonly');
       const store = tx.objectStore('game_files');
       const req = store.openCursor();
-      req.onsuccess = (e) => {
+      req.onsuccess = (e: any) => {
         const cursor = e.target.result;
         if (cursor) {
           const keyStr = cursor.key.toString();
@@ -323,12 +346,12 @@ export async function getGameFiles(gameId) {
   return result;
 }
 
-export async function deleteGameCache(gameId) {
+export async function deleteGameCache(gameId: string): Promise<void> {
   try {
     const db = await openDB();
 
     // Delete meta
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const tx = db.transaction('game_meta', 'readwrite');
       tx.objectStore('game_meta').delete(gameId);
       tx.oncomplete = () => resolve();
@@ -336,11 +359,11 @@ export async function deleteGameCache(gameId) {
     });
 
     // Delete file records
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const tx = db.transaction('game_files', 'readwrite');
       const store = tx.objectStore('game_files');
       const req = store.openCursor();
-      req.onsuccess = (e) => {
+      req.onsuccess = (e: any) => {
         const cursor = e.target.result;
         if (cursor) {
           if (cursor.value.gameId === gameId || cursor.key.toString().startsWith(`${gameId}:`)) {
@@ -369,10 +392,10 @@ export async function deleteGameCache(gameId) {
   }
 }
 
-export async function clearAllCaches() {
+export async function clearAllCaches(): Promise<void> {
   try {
     const db = await openDB();
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const tx = db.transaction(['game_meta', 'game_files'], 'readwrite');
       tx.objectStore('game_meta').clear();
       tx.objectStore('game_files').clear();
@@ -388,8 +411,8 @@ export async function clearAllCaches() {
   }
 }
 
-export function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));

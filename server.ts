@@ -9,13 +9,12 @@ const PORT = 3000;
 app.use(express.json());
 
 // In-memory cache for GitHub trees to prevent hitting rate limits
-const treeCache = new Map();
+const treeCache = new Map<string, { timestamp: number; data: any }>();
 
-// Parse GitHub repo URL into owner, repo
-function parseRepoUrl(url) {
-  if (!url) return null;
+// Parse GitHub repo URL into owner, repo, default branch
+function parseRepoUrl(url: string) {
   const clean = url.replace(/\.git$/, '').trim();
-  const match = clean.match(/github\.com\/([^/]+)\/([^/]+)/i);
+  const match = clean.match(/github\.com\/([^\/]+)\/([^\/]+)/i);
   if (!match) return null;
   return { owner: match[1], repo: match[2] };
 }
@@ -36,7 +35,7 @@ app.get('/api/games', (req, res) => {
 
 // API: get repo tree
 app.get('/api/repo-tree', async (req, res) => {
-  const { owner, repo, branch = 'main' } = req.query;
+  const { owner, repo, branch = 'main' } = req.query as { owner?: string; repo?: string; branch?: string };
   if (!owner || !repo) {
     return res.status(400).json({ error: 'Missing owner or repo query params' });
   }
@@ -50,7 +49,7 @@ app.get('/api/repo-tree', async (req, res) => {
   // Try fetching git tree from GitHub API
   try {
     const branchesToTry = [branch, 'main', 'master'];
-    let treeData = null;
+    let treeData: any = null;
     let successfulBranch = branch;
 
     for (const b of branchesToTry) {
@@ -73,7 +72,7 @@ app.get('/api/repo-tree', async (req, res) => {
     if (treeData && treeData.tree) {
       const result = {
         branch: successfulBranch,
-        tree: treeData.tree.map((item) => ({
+        tree: treeData.tree.map((item: any) => ({
           path: item.path,
           type: item.type, // 'blob' or 'tree'
           size: item.size || 0,
@@ -89,12 +88,12 @@ app.get('/api/repo-tree', async (req, res) => {
       error: 'GitHub tree unavailable or rate limited',
       fallback: true,
     });
-  } catch (err) {
+  } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Failed to query GitHub tree' });
   }
 });
 
-function getMime(filePath) {
+function getMime(filePath: string): string {
   const p = filePath.split('?')[0].toLowerCase();
   if (p.endsWith('.html') || p.endsWith('.htm')) return 'text/html; charset=utf-8';
   if (p.endsWith('.js') || p.endsWith('.javascript')) return 'application/javascript; charset=utf-8';
@@ -113,9 +112,39 @@ function getMime(filePath) {
   return 'application/octet-stream';
 }
 
-// Helper: inject fullscreen styling
-function injectFullscreenCSS(rawHtml) {
-  const fullscreenStyle = `
+// API: Direct Game Runtime Server (runs real GitHub web games with all assets)
+app.get(['/api/game-runtime/:owner/:repo', '/api/game-runtime/:owner/:repo/*'], async (req, res) => {
+  const params = req.params as Record<string, string>;
+  let owner = params.owner || '';
+  let repo = params.repo || '';
+  let subPath = (req.params[0] || '').replace(/^\/+/, '');
+
+  // Handle known aliases
+  if (repo === 'ULTRAKILL' && owner === 'teker821') {
+    owner = 'MoltenWolf85';
+    repo = 'UK-web';
+  } else if (repo.toLowerCase().includes('hustle')) {
+    owner = 'web-ports';
+    repo = 'yomi-hustle';
+  }
+
+  // Handle default entry point
+  if (!subPath || subPath === '') {
+    if (repo.toLowerCase().includes('eaglercraft')) {
+      subPath = 'stable-download/web/index.html';
+    } else {
+      subPath = 'index.html';
+    }
+  }
+
+  const mime = getMime(subPath);
+
+  // Check local cache on disk first
+  const cacheDir = path.join(process.cwd(), '.game-cache', owner, repo);
+  const cacheFilePath = path.join(cacheDir, ...subPath.split('/'));
+
+  function injectFullscreenCSS(rawHtml: string): string {
+    const fullscreenStyle = `
 <style id="clean-zero-scrollbar">
   html, body {
     margin: 0 !important;
@@ -208,45 +237,14 @@ function injectFullscreenCSS(rawHtml) {
 </script>
 `;
 
-  let clean = rawHtml.replace(/<style id="clean-zero-scrollbar">[\s\S]*?<\/style>/g, '');
-  clean = clean.replace(/<script id="clean-fullscreen-helper">[\s\S]*?<\/script>/g, '');
+    let clean = rawHtml.replace(/<style id="clean-zero-scrollbar">[\s\S]*?<\/style>/g, '');
+    clean = clean.replace(/<script id="clean-fullscreen-helper">[\s\S]*?<\/script>/g, '');
 
-  if (clean.includes('</head>')) {
-    return clean.replace('</head>', `${fullscreenStyle}</head>`);
-  }
-  return `${fullscreenStyle}${clean}`;
-}
-
-// API: Direct Game Runtime Server (runs real GitHub web games with all assets)
-app.get(['/api/game-runtime/:owner/:repo', '/api/game-runtime/:owner/:repo/*'], async (req, res) => {
-  const params = req.params;
-  let owner = params.owner || '';
-  let repo = params.repo || '';
-  let subPath = (req.params[0] || '').replace(/^\/+/, '');
-
-  // Handle known aliases
-  if (repo === 'ULTRAKILL' && owner === 'teker821') {
-    owner = 'MoltenWolf85';
-    repo = 'UK-web';
-  } else if (repo.toLowerCase().includes('hustle')) {
-    owner = 'web-ports';
-    repo = 'yomi-hustle';
-  }
-
-  // Handle default entry point
-  if (!subPath || subPath === '') {
-    if (repo.toLowerCase().includes('eaglercraft')) {
-      subPath = 'stable-download/web/index.html';
-    } else {
-      subPath = 'index.html';
+    if (clean.includes('</head>')) {
+      return clean.replace('</head>', `${fullscreenStyle}</head>`);
     }
+    return `${fullscreenStyle}${clean}`;
   }
-
-  const mime = getMime(subPath);
-
-  // Check local cache on disk first
-  const cacheDir = path.join(process.cwd(), '.game-cache', owner, repo);
-  const cacheFilePath = path.join(cacheDir, ...subPath.split('/'));
 
   if (fs.existsSync(cacheFilePath)) {
     try {
@@ -271,7 +269,7 @@ app.get(['/api/game-runtime/:owner/:repo', '/api/game-runtime/:owner/:repo/*'], 
 
   // Candidates to fetch upstream
   const branches = ['main', 'master'];
-  let fetchedBuffer = null;
+  let fetchedBuffer: Buffer | null = null;
 
   for (const branch of branches) {
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${encodeURI(subPath)}`;
@@ -322,17 +320,17 @@ app.get(['/api/game-runtime/:owner/:repo', '/api/game-runtime/:owner/:repo/*'], 
 
 // API: Fallback redirect by game slug
 app.get('/api/game-runtime-fallback', (req, res) => {
-  const { gameId, path: subPath } = req.query;
+  const { gameId, path: subPath } = req.query as { gameId?: string; path?: string };
   try {
     const metaPath = path.join(process.cwd(), 'GameMetadata.json');
     if (fs.existsSync(metaPath)) {
       const list = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      const found = list.find((g) =>
+      const found = list.find((g: any) =>
         g.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === gameId
       );
       if (found) {
         const cleanRepo = found.repo.replace(/\.git$/, '').trim();
-        const match = cleanRepo.match(/github\.com\/([^/]+)\/([^/]+)/i);
+        const match = cleanRepo.match(/github\.com\/([^\/]+)\/([^\/]+)/i);
         if (match) {
           const target = `/api/game-runtime/${match[1]}/${match[2]}/${subPath || 'index.html'}`;
           return res.redirect(target);

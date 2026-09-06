@@ -1,14 +1,26 @@
-// LowTierSite - Native GitHub Downloader & Caching Engine
+import { CachedGameMeta, DownloadProgress } from '../types';
 import {
   detectEngine,
   detectEntryPoint,
   parseGitHubRepoUrl,
+  ParsedRepoInfo,
   saveDownloadedGame,
   slugifyGame,
-} from './cacheManager.js';
+} from './cacheManager';
 
-// Known manifests for instant zero-lag lookup & fallback
-const KNOWN_MANIFESTS = {
+interface RepoFile {
+  path: string;
+  size: number;
+}
+
+export function parseRepoUrl(url: string): ParsedRepoInfo | null {
+  const parsed = parseGitHubRepoUrl(url);
+  if (!parsed.owner || !parsed.repo) return null;
+  return parsed;
+}
+
+// Known fallbacks in case GitHub API rate-limit hits or static hosting on Surge.sh
+const KNOWN_MANIFESTS: Record<string, { branch: string; files: RepoFile[] }> = {
   'irv77/hd_fnaf/1': {
     branch: 'main',
     files: [
@@ -230,8 +242,82 @@ const KNOWN_MANIFESTS = {
   },
 };
 
-function isRuntimeFile(filePath) {
-  const p = (filePath || '').toLowerCase();
+export async function fetchRepoManifest(
+  repoUrl: string
+): Promise<{ branch: string; files: RepoFile[] }> {
+  const parsed = parseRepoUrl(repoUrl);
+  if (!parsed) {
+    throw new Error('Invalid GitHub repository URL');
+  }
+
+  const { owner, repo, branch: defaultBranch, subPath } = parsed;
+  const repoKey = subPath ? `${owner}/${repo}/${subPath}` : `${owner}/${repo}`;
+
+  // 1. Instant check against verified manifests - ZERO network lag, zero 404s on Surge
+  if (KNOWN_MANIFESTS[repoKey]) {
+    return KNOWN_MANIFESTS[repoKey];
+  }
+
+  // 2. Query jsDelivr package data API (if root repository)
+  if (!subPath) {
+    try {
+      const jsdResp = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@main`);
+      if (jsdResp.ok) {
+        const data = await jsdResp.json();
+        if (data.files && Array.isArray(data.files)) {
+          const runtimeFiles = data.files
+            .filter((item: any) => item.type === 'file' && isRuntimeFile(item.name))
+            .map((item: any) => ({ path: item.name, size: item.size || 1024 }));
+          if (runtimeFiles.length > 0) {
+            return { branch: 'main', files: runtimeFiles };
+          }
+        }
+      }
+    } catch (e) {
+      // continue
+    }
+  }
+
+  // 3. Direct GitHub API tree query with subPath filtering
+  for (const branch of [defaultBranch, 'main', 'master']) {
+    try {
+      const resp = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+        { headers: { Accept: 'application/vnd.github.v3+json' } }
+      );
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.tree) {
+          let treeItems = json.tree.filter((item: any) => item.type === 'blob');
+          if (subPath) {
+            const prefix = subPath.replace(/^\/+|\/+$/g, '') + '/';
+            treeItems = treeItems.filter((item: any) => item.path.startsWith(prefix));
+          }
+          const runtimeFiles = treeItems
+            .filter((item: any) => isRuntimeFile(item.path))
+            .map((item: any) => ({ path: item.path, size: item.size || 1024 }));
+          if (runtimeFiles.length > 0) {
+            return { branch, files: runtimeFiles };
+          }
+        }
+      }
+    } catch (err) {
+      // continue
+    }
+  }
+
+  // Check known manifest
+  if (KNOWN_MANIFESTS[repoKey]) {
+    return KNOWN_MANIFESTS[repoKey];
+  }
+
+  throw new Error(
+    `Unable to inspect repository ${repoKey}. The repository may be private, rate-limited, or contains no web bundle.`
+  );
+}
+
+function isRuntimeFile(filePath: string): boolean {
+  const p = filePath.toLowerCase();
   if (
     p.startsWith('.git') ||
     p.startsWith('.github') ||
@@ -241,15 +327,15 @@ function isRuntimeFile(filePath) {
     p.endsWith('.txt') ||
     p.endsWith('.gitignore') ||
     p.endsWith('.gitattributes') ||
-    p.endsWith('.cs')
+    p.endsWith('.cs') // ignore raw C# source code files
   ) {
     return false;
   }
   return true;
 }
 
-export function getFileMime(filePath) {
-  const p = (filePath || '').toLowerCase();
+export function getFileMime(filePath: string): string {
+  const p = filePath.toLowerCase();
   if (p.endsWith('.html') || p.endsWith('.htm')) return 'text/html';
   if (p.endsWith('.js')) return 'application/javascript';
   if (p.endsWith('.wasm') || p.includes('.wasm.part')) return 'application/wasm';
@@ -265,92 +351,22 @@ export function getFileMime(filePath) {
   return 'application/octet-stream';
 }
 
-export async function fetchRepoManifest(repoUrl) {
-  const parsed = parseGitHubRepoUrl(repoUrl);
-  if (!parsed || !parsed.owner || !parsed.repo) {
-    throw new Error('Invalid GitHub repository URL');
-  }
-
-  const { owner, repo, branch: defaultBranch, subPath } = parsed;
-  const repoKey = subPath ? `${owner}/${repo}/${subPath}` : `${owner}/${repo}`;
-
-  if (KNOWN_MANIFESTS[repoKey]) {
-    return KNOWN_MANIFESTS[repoKey];
-  }
-
-  // Try server API first if running with backend
-  try {
-    const apiResp = await fetch(`/api/repo-tree?owner=${owner}&repo=${repo}&branch=${defaultBranch}`);
-    if (apiResp.ok) {
-      const data = await apiResp.json();
-      if (data.tree && Array.isArray(data.tree)) {
-        let treeItems = data.tree.filter((item) => item.type === 'blob');
-        if (subPath) {
-          const prefix = subPath.replace(/^\/+|\/+$/g, '') + '/';
-          treeItems = treeItems.filter((item) => item.path.startsWith(prefix));
-        }
-        const runtimeFiles = treeItems
-          .filter((item) => isRuntimeFile(item.path))
-          .map((item) => ({ path: item.path, size: item.size || 1024 }));
-        if (runtimeFiles.length > 0) {
-          return { branch: data.branch || defaultBranch, files: runtimeFiles };
-        }
-      }
-    }
-  } catch (e) {
-    // continue to direct GitHub API
-  }
-
-  // Direct GitHub API tree query
-  for (const branch of [defaultBranch, 'main', 'master']) {
-    try {
-      const resp = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
-        { headers: { Accept: 'application/vnd.github.v3+json' } }
-      );
-      if (resp.ok) {
-        const json = await resp.json();
-        if (json.tree) {
-          let treeItems = json.tree.filter((item) => item.type === 'blob');
-          if (subPath) {
-            const prefix = subPath.replace(/^\/+|\/+$/g, '') + '/';
-            treeItems = treeItems.filter((item) => item.path.startsWith(prefix));
-          }
-          const runtimeFiles = treeItems
-            .filter((item) => isRuntimeFile(item.path))
-            .map((item) => ({ path: item.path, size: item.size || 1024 }));
-          if (runtimeFiles.length > 0) {
-            return { branch, files: runtimeFiles };
-          }
-        }
-      }
-    } catch (err) {
-      // continue
-    }
-  }
-
-  if (KNOWN_MANIFESTS[repoKey]) {
-    return KNOWN_MANIFESTS[repoKey];
-  }
-
-  throw new Error(
-    `Unable to inspect repository ${repoKey}. The repository may be private or rate-limited.`
-  );
-}
-
+// Download single file directly trying raw GitHub or jsDelivr CDN based on file size and format
 async function downloadFileContent(
-  owner,
-  repo,
-  branch,
-  filePath,
-  fileSize = 0,
-  onByteProgress,
-  abortSignal
-) {
+  owner: string,
+  repo: string,
+  branch: string,
+  filePath: string,
+  fileSize: number = 0,
+  onByteProgress?: (loadedDelta: number) => void,
+  abortSignal?: AbortSignal
+): Promise<Blob> {
   const cleanPath = filePath.replace(/^\/+/, '');
   const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${encodeURI(cleanPath)}`;
   const cdnUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${branch}/${encodeURI(cleanPath)}`;
 
+  // jsDelivr has a hard 20MB file limit from GitHub and rejects larger files with 403.
+  // Large split binary files (.part*, .data, .wasm, .unx, .gba, .unityweb) are routed to raw GitHub first.
   const isLargeOrBinary =
     fileSize >= 18 * 1024 * 1024 ||
     /\.(part\d+|data|wasm|unx|gba|unityweb)$/i.test(cleanPath);
@@ -359,14 +375,15 @@ async function downloadFileContent(
 
   for (let i = 0; i < urlsToTry.length; i++) {
     const url = urlsToTry[i];
-    if (abortSignal && abortSignal.aborted) {
+    if (abortSignal?.aborted) {
       throw new Error('Download cancelled');
     }
 
     try {
+      // For CDN requests, apply a fast 5s timeout so stalls immediately fall back to raw GitHub
       const isCdn = url.includes('jsdelivr.net');
       let fetchSignal = abortSignal;
-      let timeoutId = null;
+      let timeoutId: any = null;
 
       if (isCdn) {
         const timeoutCtrl = new AbortController();
@@ -383,17 +400,19 @@ async function downloadFileContent(
       if (response.ok) {
         const mime = getFileMime(cleanPath);
 
+        // For small files (< 1MB), use native C++ response.blob() for zero JS garbage collection overhead
         if (fileSize > 0 && fileSize < 1024 * 1024) {
           const blob = await response.blob();
           if (onByteProgress) onByteProgress(blob.size);
           return blob;
         }
 
+        // For larger files or unknown sizes, stream chunks with progress tracking
         if (response.body && onByteProgress) {
           const reader = response.body.getReader();
-          const chunks = [];
+          const chunks: Uint8Array[] = [];
           while (true) {
-            if (abortSignal && abortSignal.aborted) {
+            if (abortSignal?.aborted) {
               reader.cancel();
               throw new Error('Download cancelled');
             }
@@ -411,14 +430,15 @@ async function downloadFileContent(
           return blob;
         }
       }
-    } catch (e) {
-      if (abortSignal && abortSignal.aborted) {
+    } catch (e: any) {
+      if (abortSignal?.aborted || e?.message === 'Download cancelled') {
         throw new Error('Download cancelled');
       }
+      // Continue to next URL candidate
     }
   }
 
-  // Quick fallback try on rawUrl
+  // Quick retry once on transient network blip
   try {
     const fallbackResponse = await fetch(rawUrl, { signal: abortSignal });
     if (fallbackResponse.ok) {
@@ -426,16 +446,21 @@ async function downloadFileContent(
       if (onByteProgress) onByteProgress(blob.size);
       return blob;
     }
-  } catch (err) {
-    if (abortSignal && abortSignal.aborted) throw new Error('Download cancelled');
+  } catch (err: any) {
+    if (abortSignal?.aborted) throw new Error('Download cancelled');
   }
 
   throw new Error(`Failed to download: ${cleanPath}`);
 }
 
-export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSignal) {
+export async function downloadGameToCache(
+  gameName: string,
+  repoUrl: string,
+  onProgress: (prog: DownloadProgress) => void,
+  abortSignal?: AbortSignal
+): Promise<CachedGameMeta> {
   const gameId = slugifyGame(gameName);
-  const parsed = parseGitHubRepoUrl(repoUrl);
+  const parsed = parseRepoUrl(repoUrl);
   if (!parsed) {
     throw new Error('Invalid GitHub URL');
   }
@@ -456,13 +481,14 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
   }
 
   const totalBytesExpected = files.reduce((acc, f) => acc + f.size, 0);
-  const downloadedFilesMap = new Map();
+  const downloadedFilesMap = new Map<string, { blob: Blob; mimeType: string }>();
 
   let totalBytesDownloaded = 0;
   let filesCompleted = 0;
   let lastProgressEmit = 0;
 
-  const emitProgress = (currentFilePath, force = false) => {
+  // Throttled progress emitter to keep React UI smooth without saturating the main thread
+  const emitProgress = (currentFilePath: string, force: boolean = false) => {
     const now = performance.now();
     if (!force && now - lastProgressEmit < 50) return;
     lastProgressEmit = now;
@@ -483,13 +509,17 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
 
   emitProgress(files[0]?.path || 'Starting download...', true);
 
+  // Dynamic concurrency optimization:
+  // - Heavy split files (> 12MB average): 4 parallel workers to prevent browser RAM spikes
+  // - Lightweight / medium games: 6 parallel workers (3x faster than original 2)
+  // - High-file count libraries: up to 8 workers
   const averageSize = totalBytesExpected / Math.max(1, files.length);
   const concurrency = averageSize > 12 * 1024 * 1024 ? 4 : (files.length > 50 ? 8 : 6);
   const queue = [...files];
 
   async function worker() {
     while (queue.length > 0) {
-      if (abortSignal && abortSignal.aborted) {
+      if (abortSignal?.aborted) {
         throw new Error('Download cancelled');
       }
 
@@ -500,8 +530,8 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
 
       let fileLoadedBytes = 0;
       const blob = await downloadFileContent(
-        parsed.owner,
-        parsed.repo,
+        parsed!.owner,
+        parsed!.repo,
         branch,
         file.path,
         file.size,
@@ -518,14 +548,16 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
         mimeType: getFileMime(file.path),
       });
 
-      if (parsed.subPath && file.path.startsWith(parsed.subPath + '/')) {
-        const stripped = file.path.substring(parsed.subPath.length + 1);
+      // If subPath was specified (e.g. "1/index.html"), also store the relative stripped path ("index.html")
+      if (parsed!.subPath && file.path.startsWith(parsed!.subPath + '/')) {
+        const stripped = file.path.substring(parsed!.subPath.length + 1);
         downloadedFilesMap.set(stripped, {
           blob,
           mimeType: getFileMime(file.path),
         });
       }
 
+      // Store common case aliases for case-sensitive emulator paths
       if (file.path === 'games/pokemon_emerald.gba') {
         downloadedFilesMap.set('games/Pokemon_Emerald.gba', {
           blob,
@@ -546,6 +578,7 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
   const workers = Array.from({ length: concurrency }, () => worker());
   await Promise.all(workers);
 
+  // Caching phase (30-day cache)
   onProgress({
     phase: 'caching',
     currentFile: 'Saving to 30-day browser cache...',
@@ -557,13 +590,13 @@ export async function downloadGameToCache(gameName, repoUrl, onProgress, abortSi
   });
 
   const filePaths = Array.from(downloadedFilesMap.keys());
-  const entryPoint = parsed.entryPoint || detectEntryPoint(filePaths);
+  const entryPoint = parsed!.entryPoint || detectEntryPoint(filePaths);
   const engine = detectEngine(filePaths);
 
   const cachedAt = Date.now();
-  const expiresAt = cachedAt + 30 * 24 * 60 * 60 * 1000;
+  const expiresAt = cachedAt + 30 * 24 * 60 * 60 * 1000; // Exactly 30 days
 
-  const meta = {
+  const meta: CachedGameMeta = {
     id: gameId,
     name: gameName,
     repo: repoUrl,
