@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Testers Channels: announcements, chat, bug_reports, suggestions
+    match /testers_announcements/{document=**} {
+      allow read: if true;
+      allow write: if true; // Or restrict to request.auth != null for registered users only
+    }
+
+    match /testers_chat/{document=**} {
+      allow read: if true;
+      allow write: if true; // Or restrict to request.auth != null
+    }
+
+    match /testers_bug_reports/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /testers_suggestions/{document=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // User accounts & profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
