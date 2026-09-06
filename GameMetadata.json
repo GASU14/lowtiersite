@@ -169,13 +169,6 @@
     "genre": "Survival"
   },
   {
-    "name": "Lobotomy Corporation",
-    "repo": "https://github.com/Reeyuki/lobcorp.git",
-    "thumbnail": "https://assets-prd.ignimgs.com/2023/10/31/lobo-1698713185857.jpg?crop=1%3A1%2Csmart&format=jpg&auto=webp&quality=80",
-    "badge": "Low",
-    "genre": "Simulation"
-  },
-  {
     "name": "Kindergarten",
     "repo": "https://github.com/genizy/web-port/tree/main/kindergarten/1",
     "thumbnail": "https://assets-prd.ignimgs.com/2023/01/15/kindergarten-1673745261011.jpg?crop=1%3A1%2Csmart&format=jpg&auto=webp&quality=80",

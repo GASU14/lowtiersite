@@ -5,41 +5,258 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LowTierSite</title>
 
+    <!-- Embedded Favicons to prevent any 404 error -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322c55e'%3E%3Cpath d='M6 11h4V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-4v4a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-4H6a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z'/%3E%3C/svg%3E" />
+    <link rel="alternate icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAFZJREFUOE9jZKAQMFKon2HUAAYGBoa/DAwM//8zMDCgyTEyMjIy/GeA0Ew4FSD7F1kRsk2kugFuCF5/4NNDihup7gVpBpNDdhuIDcOExyCyD0AYBwUACWIdGflzP2MAAAAASUVORK5CYII=" />
+
     <!-- Resource Hints for faster game CDN and asset loading -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
     <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin />
     <link rel="dns-prefetch" href="https://raw.githubusercontent.com" />
-    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
-    <link rel="dns-prefetch" href="https://firestore.googleapis.com" />
 
-    <script>
-      // Suppress benign Vite dev server WebSocket disconnect error
-      window.addEventListener('unhandledrejection', function(e) {
-        var reason = e.reason;
-        var msg = (reason && (reason.message || reason.toString())) || '';
-        if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('ws://') !== -1) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        }
-      });
-      window.addEventListener('error', function(e) {
-        var msg = (e.message || '') + '';
-        if (msg.indexOf('WebSocket') !== -1) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        }
-      });
-    </script>
-    <meta name="description" content="Minimalist dark-themed web game portal with on-demand download, 30-day cache, and Unity WASM / WebGL game player." />
+    <meta name="description" content="Fire ass site" />
     <meta property="og:title" content="LowTierSite" />
-    <meta property="og:description" content="Minimalist dark-themed web game portal with on-demand download, 30-day cache, and Unity WASM / WebGL game player." />
+    <meta property="og:description" content="Fire ass site" />
     <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Native Browser CSS -->
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <!-- Site Header -->
+    <header class="site-header" id="site-header">
+      <div class="header-container">
+        <!-- Logo -->
+        <h1 class="brand-title">LowTierSite</h1>
+
+        <!-- Header Actions -->
+        <div class="header-actions">
+          <!-- Search Bar -->
+          <div class="search-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="text"
+              id="search-games-input"
+              class="search-input"
+              placeholder="Search games..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <!-- 1:1 Aspect Ratio Sort / Filter Button & Dropdown -->
+          <div class="dropdown-container">
+            <button
+              id="genre-sort-dropdown-btn"
+              class="btn-icon-square"
+              title="Filter by genre"
+              aria-label="Filter genres"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="4" y1="21" x2="4" y2="14"></line>
+                <line x1="4" y1="10" x2="4" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12" y2="3"></line>
+                <line x1="20" y1="21" x2="20" y2="16"></line>
+                <line x1="20" y1="12" x2="20" y2="3"></line>
+                <line x1="1" y1="14" x2="7" y2="14"></line>
+                <line x1="9" y1="8" x2="15" y2="8"></line>
+                <line x1="17" y1="16" x2="23" y2="16"></line>
+              </svg>
+            </button>
+
+            <!-- Dropdown Menu -->
+            <div id="genre-dropdown-menu" class="dropdown-menu">
+              <div class="dropdown-header">Filter by Genre</div>
+              <div id="genre-items-container"></div>
+            </div>
+          </div>
+
+          <!-- Storage / Cache Manager Button -->
+          <button id="open-cache-manager-btn" class="btn-header-pill" title="Manage 30-day offline storage">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="12" x2="2" y2="12"></line>
+              <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
+              <line x1="6" y1="16" x2="6.01" y2="16"></line>
+              <line x1="10" y1="16" x2="10.01" y2="16"></line>
+            </svg>
+            <span>Storage</span>
+            <span id="cache-count-badge" class="badge-counter" style="display: none;">0</span>
+          </button>
+
+          <!-- Testers Button -->
+          <button id="open-testers-btn" class="btn-header-pill" title="Testers & Feedback">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>Testers</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Game Catalog Grid -->
+    <main class="main-content">
+      <div id="game-grid" class="game-grid"></div>
+
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <p>No games found matching your search</p>
+        <button id="clear-search-btn" class="btn-clear-search">Clear search</button>
+      </div>
+    </main>
+
+    <!-- Download Screen Modal -->
+    <div id="download-modal" class="modal-overlay">
+      <div class="modal-box">
+        <div class="modal-header">
+          <span class="modal-title">Downloading Game Assets</span>
+          <button id="download-close-btn" class="modal-close-btn" aria-label="Cancel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="download-hero">
+            <img id="download-thumb" class="download-thumb" src="" alt="Thumbnail" />
+            <div class="download-info">
+              <h3 id="download-title">Game Title</h3>
+              <p id="download-genre">Action • Low Tier</p>
+            </div>
+          </div>
+
+          <div class="progress-track">
+            <div id="download-progress-bar" class="progress-bar-fill"></div>
+          </div>
+
+          <div class="progress-meta">
+            <span id="download-status-text">Fetching game files...</span>
+            <span id="download-percent-text" style="font-weight: 700; color: #ffffff;">0%</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="download-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Storage & Cache Manager Modal -->
+    <div id="cache-modal" class="modal-overlay">
+      <div class="modal-box">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title">Browser Storage & Cache</div>
+            <div style="font-size: 11px; color: #71717a; margin-top: 2px;">Offline IndexedDB storage (30-day retention)</div>
+          </div>
+          <button id="cache-modal-close-btn" class="modal-close-btn" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="cache-stat-bar">
+            <div class="cache-stat-item">
+              <span id="cache-total-games" class="cache-stat-val">0 games</span>
+              <span class="cache-stat-lbl">Cached Locally</span>
+            </div>
+            <div class="cache-stat-item" style="align-items: flex-end;">
+              <span id="cache-total-size" class="cache-stat-val">0 B</span>
+              <span class="cache-stat-lbl">Disk Space Used</span>
+            </div>
+          </div>
+
+          <div id="cached-list-container" class="cached-game-list"></div>
+        </div>
+        <div class="modal-footer" style="justify-content: space-between;">
+          <button id="clear-all-caches-btn" class="btn-danger">Clear All Caches</button>
+          <button id="cache-modal-footer-close" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Testers & Community Modal -->
+    <div id="testers-modal" class="modal-overlay">
+      <div class="modal-box">
+        <div class="modal-header">
+          <span class="modal-title">Testers & Performance</span>
+          <button id="testers-modal-close-btn" class="modal-close-btn" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body" style="font-size: 13px; line-height: 1.6; color: #a1a1aa;">
+          <p style="margin-bottom: 12px;">
+            <strong style="color: #ffffff;">LowTierSite</strong> is engineered to run web ports and Unity/WebGL games with smooth performance on low-spec devices and Chromebooks.
+          </p>
+          <div style="background-color: #161619; border: 1px solid #222226; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+            <div style="color: #4ade80; font-weight: 600; margin-bottom: 4px;">✓ Native 30-Day Browser Storage</div>
+            <p style="font-size: 12px; color: #888888;">Once a game is downloaded, its assets are saved directly into your browser's IndexedDB and CacheStorage. You can play completely offline without re-downloading.</p>
+          </div>
+          <div style="background-color: #161619; border: 1px solid #222226; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+            <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">⚡ Resolution Scaling</div>
+            <p style="font-size: 12px; color: #888888;">If a 3D game experiences frame drops, use the resolution dropdown in the top bar to switch to 720p, 540p, or 480p for an instant FPS boost.</p>
+          </div>
+          <p style="font-size: 12px; color: #71717a;">All games are sorted alphabetically A–Z for quick browsing.</p>
+        </div>
+        <div class="modal-footer">
+          <button id="testers-modal-footer-close" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fullscreen Game Player Overlay -->
+    <div id="player-overlay" class="player-overlay">
+      <div class="player-topbar">
+        <div class="player-topbar-left">
+          <button id="player-back-btn" class="btn-player-back">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Games</span>
+          </button>
+          <span id="player-game-title" class="player-game-title">Game Title</span>
+          <span id="player-cache-badge" class="player-cache-badge">30d cached</span>
+        </div>
+
+        <div class="player-topbar-right">
+          <select id="resolution-select" class="resolution-select" title="Change resolution scale"></select>
+          <button id="player-reload-btn" class="btn-player-tool" title="Reload Game" aria-label="Reload">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+            </svg>
+          </button>
+          <button id="player-fullscreen-btn" class="btn-player-tool" title="Toggle Fullscreen" aria-label="Fullscreen">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <polyline points="9 21 3 21 3 15"></polyline>
+              <line x1="21" y1="3" x2="14" y2="10"></line>
+              <line x1="3" y1="21" x2="10" y2="14"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="player-viewport" class="player-viewport">
+        <div id="game-spinner" class="game-loading-spinner" style="display: none;">
+          <div class="spinner-icon"></div>
+          <span>Initializing game engine...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Native JavaScript Controller -->
+    <script type="module" src="/src/app.js"></script>
   </body>
 </html>
-

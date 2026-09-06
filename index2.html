@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LowTierSite</title>
+
+  <!-- Complete valid base64 favicons to completely prevent automatic browser 404 requests -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='.9em'%20font-size='90'%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+  <link rel="shortcut icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+  <link rel="apple-touch-icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+
+  <script>
+    // Suppress benign WebSocket or 404 resource logging
+    window.addEventListener('unhandledrejection', function(e) {
+      var reason = e.reason;
+      var msg = (reason && (reason.message || reason.toString())) || '';
+      if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('ws://') !== -1 || msg.indexOf('404') !== -1) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    });
+    window.addEventListener('error', function(e) {
+      var msg = (e.message || '') + '';
+      if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('404') !== -1) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #0a0a0a;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      user-select: none;
+    }
+
+    .wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      color: #ffffff;
+      margin-bottom: 8px;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      min-width: 180px;
+      padding: 14px 32px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #ffffff;
+      background-color: #1e1e24;
+      border: 1px solid #363640;
+      border-radius: 8px;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.15s ease, transform 0.1s ease, opacity 0.15s ease, border-color 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:hover:not(:disabled) {
+      background-color: #2b2b36;
+      border-color: #50505c;
+      transform: translateY(-1px);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn.enter {
+      background-color: #22c55e;
+      border-color: #22c55e;
+      color: #000000;
+    }
+
+    .btn.enter:hover {
+      background-color: #16a34a;
+      border-color: #16a34a;
+    }
+
+    .btn-delete {
+      min-width: 180px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #888888;
+      background-color: transparent;
+      border: 1px solid #262626;
+      border-radius: 8px;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-delete:hover:not(:disabled) {
+      color: #ef4444;
+      border-color: #ef4444;
+      background-color: rgba(239, 68, 68, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .btn-delete:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn-delete:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="wrapper">
+    <h1 id="title">LowTierSite</h1>
+    <div class="btn-group">
+      <button id="action-btn" class="btn">Download</button>
+      <button id="delete-cache-btn" class="btn-delete">Delete Cache</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const CACHE_NAME = 'lowtiersite-repo-cache-v1';
+      const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+      const REPO_OWNER = 'GASU14';
+      const REPO_NAME = 'lowtiersite';
+      const REPO_TREE_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/main?recursive=1`;
+
+      const actionBtn = document.getElementById('action-btn');
+      const deleteBtn = document.getElementById('delete-cache-btn');
+
+      // Check if site is currently cached within the 30-day window
+      function isCachedValid() {
+        const cachedAt = localStorage.getItem('lowtiersite_cache_time');
+        if (!cachedAt) return false;
+        const diff = Date.now() - parseInt(cachedAt, 10);
+        return diff >= 0 && diff < RETENTION_MS;
+      }
+
+      function updateButtonState() {
+        if (isCachedValid()) {
+          actionBtn.textContent = 'Enter';
+          actionBtn.className = 'btn enter';
+          actionBtn.disabled = false;
+        } else {
+          actionBtn.textContent = 'Download';
+          actionBtn.className = 'btn';
+          actionBtn.disabled = false;
+        }
+      }
+
+      // Download site repository and store into 30-day cache
+      async function downloadSite() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Connecting...';
+        deleteBtn.disabled = true;
+
+        let files = [];
+        try {
+          const res = await fetch(REPO_TREE_URL);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.tree && Array.isArray(data.tree)) {
+              files = data.tree
+                .filter(i => i.type === 'blob')
+                .map(i => ({
+                  path: i.path,
+                  url: `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${i.path}`
+                }));
+            }
+          }
+        } catch (e) {}
+
+        const core = [
+          'index.html',
+          'GameMetadata.json',
+          'public/game-sw.js',
+          'src/style.css',
+          'src/app.js',
+          'src/cacheManager.js',
+          'src/githubDownloader.js',
+          'src/gamePlayer.js'
+        ];
+
+        for (const c of core) {
+          if (!files.find(f => f.path === c)) {
+            files.push({
+              path: c,
+              url: `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${c}`
+            });
+          }
+        }
+
+        let cache = null;
+        if ('caches' in window) {
+          cache = await caches.open(CACHE_NAME);
+        }
+
+        const total = files.length;
+        let downloaded = 0;
+
+        for (let i = 0; i < total; i++) {
+          const file = files[i];
+          const pct = Math.round(((i + 1) / total) * 100);
+          actionBtn.textContent = `${pct}%`;
+
+          try {
+            let resp = await fetch(file.url).catch(() => null);
+            if (!resp || !resp.ok) {
+              const cdn = `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@main/${file.path}`;
+              resp = await fetch(cdn).catch(() => null);
+            }
+            if (!resp || !resp.ok) {
+              resp = await fetch(`/${file.path}`).catch(() => null);
+            }
+
+            if (resp && resp.ok && cache) {
+              const blob = await resp.blob();
+              await cache.put(new Request(file.url), new Response(blob, {
+                headers: {
+                  'Content-Type': resp.headers.get('Content-Type') || 'text/plain',
+                  'Cache-Control': 'public, max-age=2592000'
+                }
+              }));
+              downloaded++;
+            }
+          } catch (e) {}
+        }
+
+        // Cache local origin entrypoints so app works offline
+        if (cache) {
+          try {
+            for (const ep of ['/', '/index.html', '/GameMetadata.json']) {
+              const r = await fetch(ep).catch(() => null);
+              if (r && r.ok) {
+                const b = await r.blob();
+                await cache.put(new Request(ep), new Response(b, {
+                  headers: { 'Content-Type': r.headers.get('Content-Type') || 'text/html' }
+                }));
+              }
+            }
+          } catch (e) {}
+        }
+
+        // Save 30-day cache timestamp
+        localStorage.setItem('lowtiersite_cache_time', Date.now().toString());
+
+        deleteBtn.disabled = false;
+        updateButtonState();
+      }
+
+      // Enter site via about:blank with full game cache support
+      function enterAboutBlank() {
+        const siteUrl = window.location.origin + '/';
+        const win = window.open('about:blank', '_blank');
+
+        if (!win) {
+          window.location.href = siteUrl;
+          return;
+        }
+
+        try {
+          const doc = win.document;
+          doc.open();
+          doc.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LowTierSite</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    iframe {
+      border: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <iframe
+    src="${siteUrl}"
+    title="LowTierSite"
+    allow="fullscreen; autoplay; gamepad; clipboard-read; clipboard-write; cross-origin-isolated"
+  ></iframe>
+</body>
+</html>`);
+          doc.close();
+        } catch (e) {
+          window.location.href = siteUrl;
+        }
+      }
+
+      // Delete all cached site files, IndexedDB games, and cache timestamps
+      async function deleteCache() {
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = 'Clearing...';
+
+        try {
+          // 1. Delete CacheStorage caches
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            for (const key of keys) {
+              await caches.delete(key);
+            }
+          }
+
+          // 2. Delete IndexedDB databases
+          if ('indexedDB' in window) {
+            if (indexedDB.databases) {
+              try {
+                const dbs = await indexedDB.databases();
+                for (const dbInfo of dbs) {
+                  if (dbInfo.name) {
+                    indexedDB.deleteDatabase(dbInfo.name);
+                  }
+                }
+              } catch (e) {}
+            }
+            try {
+              indexedDB.deleteDatabase('LowTeirGamesDB');
+            } catch (e) {}
+          }
+
+          // 3. Clear LocalStorage keys
+          localStorage.removeItem('lowtiersite_cache_time');
+          localStorage.removeItem('lowtiersite_cached_games');
+          const toRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('lowteir') || key.startsWith('lowtier') || key.includes('cache'))) {
+              toRemove.push(key);
+            }
+          }
+          for (const k of toRemove) {
+            localStorage.removeItem(k);
+          }
+
+          // 4. Unregister Service Workers
+          if ('serviceWorker' in navigator) {
+            try {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              for (const r of regs) {
+                await r.unregister();
+              }
+            } catch (e) {}
+          }
+
+          deleteBtn.textContent = 'Cache Deleted';
+          setTimeout(function () {
+            deleteBtn.textContent = 'Delete Cache';
+            deleteBtn.disabled = false;
+            updateButtonState();
+          }, 1200);
+        } catch (err) {
+          deleteBtn.textContent = 'Error';
+          setTimeout(function () {
+            deleteBtn.textContent = 'Delete Cache';
+            deleteBtn.disabled = false;
+            updateButtonState();
+          }, 1200);
+        }
+
+        updateButtonState();
+      }
+
+      actionBtn.addEventListener('click', function () {
+        if (isCachedValid()) {
+          enterAboutBlank();
+        } else {
+          downloadSite();
+        }
+      });
+
+      deleteBtn.addEventListener('click', deleteCache);
+
+      updateButtonState();
+    })();
+  </script>
+</body>
+</html>
