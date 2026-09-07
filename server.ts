@@ -8,7 +8,7 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Enable CORS for external embeds (e.g. Google Sites, iframes, standalone index2.html)
+// Enable CORS for external embeds
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -404,16 +404,6 @@ app.get(['/site', '/site.html', '/dist/index.html'], (req, res) => {
     return res.sendFile(distFile);
   }
   return res.sendFile(path.join(process.cwd(), 'index.html'));
-});
-
-// Route for standalone download launcher
-app.get(['/index2', '/index2.html', '/download', '/download.html'], (req, res) => {
-  const distFile = path.join(process.cwd(), 'dist', 'index2.html');
-  const rootFile = path.join(process.cwd(), 'index2.html');
-  if (process.env.NODE_ENV === 'production' && fs.existsSync(distFile)) {
-    return res.sendFile(distFile);
-  }
-  return res.sendFile(rootFile);
 });
 
 // Serve dist/assets statically if built assets exist

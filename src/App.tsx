@@ -12,6 +12,7 @@ import { DownloadScreen } from './components/DownloadScreen';
 import { GamePlayer } from './components/GamePlayer';
 import { CacheManagerModal } from './components/CacheManagerModal';
 import { TestersModal } from './components/TestersModal/TestersModal';
+import { PasswordGate } from './components/PasswordGate';
 import {
   initServiceWorker,
   getAllCachedGames,
@@ -30,6 +31,25 @@ export default function App() {
   }, []);
 
   // App state
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      if (sessionStorage.getItem('lts_auth') === 'true') return true;
+      const exp = localStorage.getItem('lts_auth_exp');
+      if (exp) {
+        const expTime = parseInt(exp, 10);
+        if (!isNaN(expTime) && Date.now() < expTime) {
+          sessionStorage.setItem('lts_auth', 'true');
+          return true;
+        } else {
+          localStorage.removeItem('lts_auth_exp');
+        }
+      }
+    } catch (e) {
+      // Ignore storage access errors
+    }
+    return false;
+  });
   const [cachedGamesMap, setCachedGamesMap] = useState<Map<string, CachedGameMeta>>(new Map());
   const [activeGameForDownload, setActiveGameForDownload] = useState<GameItem | null>(null);
   const [activePlayingGame, setActivePlayingGame] = useState<{
@@ -133,6 +153,10 @@ export default function App() {
     await clearAllCaches();
     await refreshCacheStatus();
   }, []);
+
+  if (!isAuthenticated) {
+    return <PasswordGate onUnlock={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div
