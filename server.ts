@@ -343,6 +343,16 @@ app.get('/api/game-runtime-fallback', (req, res) => {
   return res.status(404).send('Game fallback not found');
 });
 
+// Route for standalone download launcher
+app.get(['/index2', '/index2.html', '/download', '/download.html'], (req, res) => {
+  const distFile = path.join(process.cwd(), 'dist', 'index2.html');
+  const rootFile = path.join(process.cwd(), 'index2.html');
+  if (process.env.NODE_ENV === 'production' && fs.existsSync(distFile)) {
+    return res.sendFile(distFile);
+  }
+  return res.sendFile(rootFile);
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

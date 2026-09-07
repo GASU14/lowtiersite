@@ -273,17 +273,44 @@
           } catch (e) {}
         }
 
-        // Cache local origin entrypoints so app works offline
+        // Cache local origin entrypoints and Vite assets so app works offline
         if (cache) {
           try {
-            for (const ep of ['/', '/index.html', '/GameMetadata.json']) {
+            const entrypoints = ['/', '/index.html', '/index2.html', '/GameMetadata.json'];
+            const viteAssetsToCache = new Set();
+
+            for (const ep of entrypoints) {
               const r = await fetch(ep).catch(() => null);
               if (r && r.ok) {
+                const text = await r.clone().text().catch(() => '');
+                const matches = text.matchAll(/(?:src|href)=["']([^"']*\.(?:js|css|wasm|png|svg|json))["']/gi);
+                for (const match of matches) {
+                  const assetUrl = match[1];
+                  if (assetUrl.startsWith('/') && !assetUrl.startsWith('//')) {
+                    viteAssetsToCache.add(assetUrl);
+                  }
+                }
+
                 const b = await r.blob();
                 await cache.put(new Request(ep), new Response(b, {
                   headers: { 'Content-Type': r.headers.get('Content-Type') || 'text/html' }
                 }));
               }
+            }
+
+            for (const assetUrl of viteAssetsToCache) {
+              try {
+                const assetResp = await fetch(assetUrl).catch(() => null);
+                if (assetResp && assetResp.ok) {
+                  const blob = await assetResp.blob();
+                  await cache.put(new Request(assetUrl), new Response(blob, {
+                    headers: {
+                      'Content-Type': assetResp.headers.get('Content-Type') || 'application/javascript',
+                      'Cache-Control': 'public, max-age=2592000'
+                    }
+                  }));
+                }
+              } catch (e) {}
             }
           } catch (e) {}
         }
