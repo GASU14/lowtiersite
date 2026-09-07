@@ -8,6 +8,60 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// Enable CORS for external embeds (e.g. Google Sites, iframes, standalone index2.html)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// API endpoint to bundle and deliver the compiled site package for offline caching
+app.get('/api/site-package', (req, res) => {
+  try {
+    const distHtmlPath = path.join(process.cwd(), 'dist', 'index.html');
+    const rootHtmlPath = path.join(process.cwd(), 'index.html');
+    let html = '';
+    if (fs.existsSync(distHtmlPath)) {
+      html = fs.readFileSync(distHtmlPath, 'utf8');
+    } else if (fs.existsSync(rootHtmlPath)) {
+      html = fs.readFileSync(rootHtmlPath, 'utf8');
+    }
+
+    const metaPath = path.join(process.cwd(), 'GameMetadata.json');
+    let metadata = [];
+    if (fs.existsSync(metaPath)) {
+      try {
+        metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      } catch (e) {}
+    }
+
+    const assets: string[] = [];
+    const distAssets = path.join(process.cwd(), 'dist', 'assets');
+    if (fs.existsSync(distAssets)) {
+      const files = fs.readdirSync(distAssets);
+      for (const f of files) {
+        if (f.endsWith('.js') || f.endsWith('.css')) {
+          assets.push(`/assets/${f}`);
+        }
+      }
+    }
+
+    return res.json({
+      name: 'LowTierSite',
+      html,
+      metadata,
+      assets,
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // In-memory cache for GitHub trees to prevent hitting rate limits
 const treeCache = new Map<string, { timestamp: number; data: any }>();
 
@@ -341,6 +395,15 @@ app.get('/api/game-runtime-fallback', (req, res) => {
     // ignore
   }
   return res.status(404).send('Game fallback not found');
+});
+
+// Route for compiled static site
+app.get(['/site', '/site.html', '/dist/index.html'], (req, res) => {
+  const distFile = path.join(process.cwd(), 'dist', 'index.html');
+  if (fs.existsSync(distFile)) {
+    return res.sendFile(distFile);
+  }
+  return res.sendFile(path.join(process.cwd(), 'index.html'));
 });
 
 // Route for standalone download launcher

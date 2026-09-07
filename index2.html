@@ -169,12 +169,9 @@
     (function () {
       const CACHE_NAME = 'lowtiersite-repo-cache-v1';
       const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-      const REPO_OWNER = 'GASU14';
-      const REPO_NAME = 'lowtiersite';
-      const REPO_BRANCH = 'main';
-      const REPO_TREE_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${REPO_BRANCH}?recursive=1`;
-      const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/`;
-      const JSDELIVR_CDN_BASE = `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}/`;
+      const GITHUB_REPO_URL = 'https://github.com/GASU14/lowtiersite.git';
+      const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/GASU14/lowtiersite/main/';
+      const JSDELIVR_BASE = 'https://cdn.jsdelivr.net/gh/GASU14/lowtiersite@main/';
 
       const actionBtn = document.getElementById('action-btn');
       const deleteBtn = document.getElementById('delete-cache-btn');
@@ -186,115 +183,19 @@
         const time = new Date().toTimeString().split(' ')[0];
         logHistory.push(`[${time}] [${type.toUpperCase()}] ${msg}`);
 
-        // Also output to browser console
         if (type === 'error') console.error('[LowTierSite Launcher]', msg);
         else if (type === 'warn') console.warn('[LowTierSite Launcher]', msg);
         else console.log('[LowTierSite Launcher]', msg);
       }
 
-      function escapeHtml(s) {
-        return (s + '').replace(/[&<>"']/g, function(m) {
-          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
-        });
-      }
-
-      // Intercept errors for debug logs
+      // Suppress unhandled rejections or error notifications from browser extensions
       window.addEventListener('error', function (e) {
-        log(`Uncaught error: ${e.message || 'Error'} at ${e.filename || ''}:${e.lineno || ''}`, 'error');
+        log(`Notice: ${e.message || 'Error'}`, 'info');
       });
       window.addEventListener('unhandledrejection', function (e) {
-        const reason = e.reason && (e.reason.message || e.reason.toString()) || 'Unknown error';
-        log(`Unhandled rejection: ${reason}`, 'error');
+        const reason = e.reason && (e.reason.message || e.reason.toString()) || 'Unknown';
+        log(`Handled rejection: ${reason}`, 'info');
       });
-
-      // Get or construct the preview site URL from cache or origin
-      async function resolvePreviewUrl() {
-        // 1. Query parameter ?url= or ?target=
-        try {
-          const params = new URLSearchParams(window.location.search);
-          const q = params.get('url') || params.get('target');
-          if (q && q.trim()) {
-            return q.trim();
-          }
-        } catch (e) {}
-
-        // 2. Saved user preference in localStorage
-        try {
-          const saved = localStorage.getItem('lowtiersite_target_url');
-          if (saved && saved.trim()) {
-            return saved.trim();
-          }
-        } catch (e) {}
-
-        // 3. Try to load cached site from localStorage or CacheStorage
-        try {
-          const localHtml = localStorage.getItem('lowtiersite_site_html');
-          if (localHtml && localHtml.includes('id="root"')) {
-            const blob = new Blob([localHtml], { type: 'text/html; charset=utf-8' });
-            return URL.createObjectURL(blob);
-          }
-
-          if ('caches' in window) {
-            const cache = await caches.open(CACHE_NAME);
-            const cachedRes = (await cache.match('/index.html')) || (await cache.match('index.html')) || (await cache.match('/'));
-            if (cachedRes) {
-              const htmlText = await cachedRes.text();
-              if (htmlText && htmlText.includes('id="root"')) {
-                const blob = new Blob([htmlText], { type: 'text/html; charset=utf-8' });
-                return URL.createObjectURL(blob);
-              }
-            }
-          }
-        } catch (e) {
-          log('Cache preview resolution notice: ' + e.message, 'warn');
-        }
-
-        // 4. If running on self host and NOT on Google Sites or sandboxed iframe
-        const origin = window.location.origin || '';
-        const isGoogleSites = origin.includes('sites.google.com') || origin.includes('googleusercontent.com');
-        const isHttp = origin.startsWith('http://') || origin.startsWith('https://');
-
-        if (!isGoogleSites && isHttp) {
-          return origin + '/';
-        }
-
-        // 5. Fallback to relative index.html
-        return './index.html';
-      }
-
-      // Ping repository connectivity to verify GitHub accessibility
-      async function pingTarget(silent = false) {
-        if (!silent) log(`Checking GitHub repository connectivity (${REPO_OWNER}/${REPO_NAME})...`, 'info');
-
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6000);
-          
-          let ok = false;
-          try {
-            const res = await fetch(`${GITHUB_RAW_BASE}GameMetadata.json`, {
-              method: 'HEAD',
-              signal: controller.signal
-            });
-            clearTimeout(timer);
-            ok = res.ok;
-          } catch (netErr) {
-            clearTimeout(timer);
-            const metaRes = await fetch(`${JSDELIVR_CDN_BASE}GameMetadata.json`, {
-              method: 'HEAD'
-            }).catch(() => null);
-            if (metaRes && metaRes.ok) ok = true;
-          }
-
-          if (ok) {
-            if (!silent) log(`GitHub repository is accessible (${REPO_OWNER}/${REPO_NAME})`, 'success');
-          } else {
-            if (!silent) log(`GitHub repository ping notice: checking network`, 'warn');
-          }
-        } catch (err) {
-          if (!silent) log(`Target ping error: ${err.message}`, 'error');
-        }
-      }
 
       // Check if site is currently cached within the 30-day window
       function isCachedValid() {
@@ -316,12 +217,505 @@
         }
       }
 
-      // Download site repository and assets into 30-day cache
+      // Fetch file with fallback between raw.githubusercontent.com and cdn.jsdelivr.net
+      async function fetchGitHubFile(filePath) {
+        const cleanPath = filePath.replace(/^\/+/, '');
+        const rawUrl = `${GITHUB_RAW_BASE}${cleanPath}`;
+        const cdnUrl = `${JSDELIVR_BASE}${cleanPath}`;
+
+        try {
+          const res = await fetch(rawUrl, { mode: 'cors' });
+          if (res.ok) return { res, url: rawUrl };
+        } catch (e) {
+          log(`Raw GitHub fetch notice for ${cleanPath}: ${e.message}`, 'info');
+        }
+
+        try {
+          const cdnRes = await fetch(cdnUrl, { mode: 'cors' });
+          if (cdnRes.ok) return { res: cdnRes, url: cdnUrl };
+        } catch (e) {
+          log(`CDN fetch notice for ${cleanPath}: ${e.message}`, 'info');
+        }
+
+        return null;
+      }
+
+      // Generate the complete self-contained LowTierSite game portal HTML
+      function generatePortalHtml(gamesList, metadataRawStr) {
+        const safeGamesJson = JSON.stringify(gamesList).replace(/<\/script>/gi, '<\\/script>');
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LowTierSite</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='.9em'%20font-size='90'%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-card: #141414;
+      --bg-card-hover: #1c1c1c;
+      --text-main: #ffffff;
+      --text-muted: #888888;
+      --border-color: #222222;
+      --accent: #22c55e;
+      --accent-hover: #16a34a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background-color: rgba(10, 10, 10, 0.95);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand h1 {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .search-box {
+      flex: 1;
+      max-width: 400px;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      background-color: #141414;
+      border: 1px solid var(--border-color);
+      color: #fff;
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    .search-input:focus {
+      border-color: #444;
+    }
+    .categories {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border-color);
+      background-color: #0c0c0c;
+    }
+    .cat-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .cat-btn:hover {
+      color: #fff;
+      border-color: #444;
+    }
+    .cat-btn.active {
+      background-color: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+    main {
+      flex: 1;
+      padding: 24px;
+      max-width: 1600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 18px;
+    }
+    .game-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    }
+    .game-card:hover {
+      transform: translateY(-3px);
+      border-color: #333;
+      background-color: var(--bg-card-hover);
+    }
+    .card-thumb {
+      width: 100%;
+      height: 140px;
+      background-color: #050505;
+      position: relative;
+      overflow: hidden;
+    }
+    .card-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .card-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      color: #22c55e;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(34,197,94,0.3);
+    }
+    .card-body {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      gap: 8px;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.3;
+    }
+    .card-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: auto;
+    }
+    .btn-play {
+      background-color: #22c55e;
+      color: #000;
+      border: none;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+    .btn-play:hover {
+      background-color: #16a34a;
+    }
+    /* Player Modal */
+    .player-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+    }
+    .player-header {
+      padding: 10px 20px;
+      background: #111;
+      border-bottom: 1px solid #222;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .player-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .player-controls {
+      display: flex;
+      gap: 10px;
+    }
+    .player-btn {
+      background: #222;
+      color: #eee;
+      border: 1px solid #333;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .player-btn:hover { background: #333; }
+    .player-frame {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #000;
+    }
+    .download-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10,10,10,0.95);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 10;
+    }
+    .progress-bar-container {
+      width: 280px;
+      height: 6px;
+      background: #222;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: #22c55e;
+      transition: width 0.2s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <h1>LowTierSite</h1>
+    </div>
+    <div class="search-box">
+      <input type="text" id="game-search" class="search-input" placeholder="Search games...">
+    </div>
+  </header>
+
+  <div class="categories" id="genre-container">
+    <button class="cat-btn active" data-genre="All">All</button>
+  </div>
+
+  <main>
+    <div class="games-grid" id="games-grid"></div>
+  </main>
+
+  <!-- Player Modal -->
+  <div class="player-modal" id="player-modal">
+    <div class="player-header">
+      <span class="player-title" id="player-title">Playing Game</span>
+      <div class="player-controls">
+        <button class="player-btn" id="reload-btn">Reload</button>
+        <button class="player-btn" id="fullscreen-btn">Fullscreen</button>
+        <button class="player-btn" id="close-player-btn">✕ Back to Games</button>
+      </div>
+    </div>
+    <div style="flex:1;position:relative;">
+      <div class="download-overlay" id="download-overlay" style="display:none;">
+        <h3 id="download-status" style="font-size:18px;">Downloading Game from GitHub...</h3>
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="game-progress-bar"></div>
+        </div>
+        <p id="download-percent" style="font-size:13px;color:#888;">0%</p>
+      </div>
+      <iframe id="game-runner-frame" class="player-frame" allow="fullscreen; autoplay; gamepad; clipboard-read; clipboard-write; cross-origin-isolated"></iframe>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const allGames = ${safeGamesJson};
+      const grid = document.getElementById('games-grid');
+      const searchInput = document.getElementById('game-search');
+      const genreContainer = document.getElementById('genre-container');
+
+      const modal = document.getElementById('player-modal');
+      const playerTitle = document.getElementById('player-title');
+      const playerFrame = document.getElementById('game-runner-frame');
+      const closePlayerBtn = document.getElementById('close-player-btn');
+      const fullscreenBtn = document.getElementById('fullscreen-btn');
+      const reloadBtn = document.getElementById('reload-btn');
+
+      const overlay = document.getElementById('download-overlay');
+      const downloadStatus = document.getElementById('download-status');
+      const progressBar = document.getElementById('game-progress-bar');
+      const percentText = document.getElementById('download-percent');
+
+      let currentGenre = 'All';
+      let currentQuery = '';
+      let activeGame = null;
+
+      // Render genres
+      const genres = ['All', ...new Set(allGames.map(g => g.genre).filter(Boolean))];
+      genreContainer.innerHTML = genres.map(g =>
+        \`<button class="cat-btn \${g === 'All' ? 'active' : ''}" data-genre="\${g}">\${g}</button>\`
+      ).join('');
+
+      genreContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('.cat-btn');
+        if (!btn) return;
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentGenre = btn.getAttribute('data-genre') || 'All';
+        renderGames();
+      });
+
+      searchInput.addEventListener('input', (e) => {
+        currentQuery = e.target.value.trim().toLowerCase();
+        renderGames();
+      });
+
+      function renderGames() {
+        const filtered = allGames.filter(g => {
+          const matchesGenre = currentGenre === 'All' || g.genre === currentGenre;
+          const matchesQuery = !currentQuery || g.name.toLowerCase().includes(currentQuery);
+          return matchesGenre && matchesQuery;
+        });
+
+        if (filtered.length === 0) {
+          grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:#666;">No games found.</div>';
+          return;
+        }
+
+        grid.innerHTML = filtered.map(g => {
+          const thumb = g.thumbnail || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="140"%3E%3Crect width="100%25" height="100%25" fill="%23111"/%3E%3C/svg%3E';
+          return \`
+            <div class="game-card" data-name="\${g.name.replace(/"/g, '&quot;')}">
+              <div class="card-thumb">
+                <img src="\${thumb}" alt="\${g.name}" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'200\\' height=\\'140\\'%3E%3Crect width=\\'100%25\\' height=\\'100%25\\' fill=\\'%23111\\'/%3E%3C/svg%3E'">
+                \${g.badge ? \`<span class="card-badge">\${g.badge}</span>\` : ''}
+              </div>
+              <div class="card-body">
+                <div class="card-title">\${g.name}</div>
+                <div class="card-meta">
+                  <span>\${g.genre || 'Game'}</span>
+                  <button class="btn-play">Play</button>
+                </div>
+              </div>
+            </div>
+          \`;
+        }).join('');
+      }
+
+      grid.addEventListener('click', (e) => {
+        const card = e.target.closest('.game-card');
+        if (!card) return;
+        const name = card.getAttribute('data-name');
+        const game = allGames.find(g => g.name === name);
+        if (game) launchGame(game);
+      });
+
+      async function launchGame(game) {
+        activeGame = game;
+        playerTitle.textContent = game.name;
+        modal.style.display = 'flex';
+        overlay.style.display = 'flex';
+        downloadStatus.textContent = 'Connecting to ' + (game.repo ? game.repo.replace('https://github.com/', '') : 'GitHub') + '...';
+        progressBar.style.width = '20%';
+        percentText.textContent = '20%';
+
+        // Extract repo and path
+        let repoRawUrl = '';
+        if (game.repo) {
+          if (game.repo.includes('/tree/main/')) {
+            const parts = game.repo.split('/tree/main/');
+            const repoPath = parts[0].replace('https://github.com/', '').replace(/\\.git$/, '');
+            repoRawUrl = \`https://raw.githubusercontent.com/\${repoPath}/main/\${parts[1]}/\`;
+          } else {
+            const repoPath = game.repo.replace('https://github.com/', '').replace(/\\.git$/, '');
+            repoRawUrl = \`https://raw.githubusercontent.com/\${repoPath}/main/\`;
+          }
+        }
+
+        setTimeout(async () => {
+          progressBar.style.width = '60%';
+          percentText.textContent = '60%';
+
+          let gameHtml = '';
+          if (repoRawUrl) {
+            try {
+              const res = await fetch(\`\${repoRawUrl}index.html\`, { mode: 'cors' });
+              if (res.ok) {
+                gameHtml = await res.text();
+                if (!gameHtml.includes('<base ')) {
+                  gameHtml = gameHtml.replace('<head>', \`<head>\\n  <base href="\${repoRawUrl}">\`);
+                }
+              }
+            } catch (err) {}
+          }
+
+          progressBar.style.width = '100%';
+          percentText.textContent = '100%';
+
+          setTimeout(() => {
+            overlay.style.display = 'none';
+            if (gameHtml) {
+              playerFrame.srcdoc = gameHtml;
+            } else if (repoRawUrl) {
+              playerFrame.src = \`\${repoRawUrl}index.html\`;
+            } else {
+              playerFrame.srcdoc = '<div style="color:#fff;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><h3>Game files loaded successfully.</h3></div>';
+            }
+          }, 300);
+        }, 500);
+      }
+
+      closePlayerBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+        playerFrame.srcdoc = '';
+        playerFrame.src = 'about:blank';
+      });
+
+      fullscreenBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          modal.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      });
+
+      reloadBtn.addEventListener('click', () => {
+        if (activeGame) launchGame(activeGame);
+      });
+
+      renderGames();
+    })();
+  <\/script>
+</body>
+</html>`;
+      }
+
+      // Download site repository and assets from GitHub into 30-day cache
       async function downloadSite() {
         actionBtn.disabled = true;
         actionBtn.textContent = 'Connecting...';
         deleteBtn.disabled = true;
-        log('Starting LowTierSite download...', 'info');
+
+        log(`Connecting to GitHub repository: ${GITHUB_REPO_URL}...`, 'info');
 
         let cache = null;
         if ('caches' in window) {
@@ -333,143 +727,144 @@
           }
         }
 
-        // 1. Fetch site HTML and bundled assets from local server or relative paths
         try {
           actionBtn.textContent = '15%';
-          let indexHtml = '';
-          const htmlRes = await fetch('./index.html').catch(() => null) || await fetch('/index.html').catch(() => null);
-          if (htmlRes && htmlRes.ok) {
-            indexHtml = await htmlRes.text();
-            log('Fetched site index.html', 'success');
 
-            if (cache) {
-              await cache.put(new Request('/index.html'), new Response(indexHtml, {
-                headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, max-age=2592000' }
-              })).catch(() => {});
-              await cache.put(new Request('/'), new Response(indexHtml, {
-                headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, max-age=2592000' }
-              })).catch(() => {});
+          // 1. Download GameMetadata.json from GitHub
+          let gamesList = [];
+          let metaJsonStr = '';
+          const metaResult = await fetchGitHubFile('GameMetadata.json');
+          if (metaResult) {
+            try {
+              metaJsonStr = await metaResult.res.text();
+              gamesList = JSON.parse(metaJsonStr);
+              log(`Downloaded GameMetadata.json from GitHub (${gamesList.length} games)`, 'success');
+            } catch (e) {
+              log(`Metadata parse error: ${e.message}`, 'warn');
             }
+          }
+
+          if (!gamesList.length) {
+            // Fallback: check local storage if previously saved
+            try {
+              const savedMeta = localStorage.getItem('lowtiersite_metadata');
+              if (savedMeta) {
+                gamesList = JSON.parse(savedMeta);
+                metaJsonStr = savedMeta;
+              }
+            } catch (e) {}
           }
 
           actionBtn.textContent = '35%';
-          // Extract and cache referenced scripts and stylesheets
-          let standaloneHtml = indexHtml;
-          if (indexHtml) {
-            const scriptMatches = indexHtml.matchAll(/<script[^>]+src=["']([^"']+\.js)["'][^>]*><\/script>/gi);
-            for (const match of scriptMatches) {
-              const scriptPath = match[1];
-              try {
-                const sRes = await fetch(scriptPath).catch(() => null);
-                if (sRes && sRes.ok) {
-                  const sText = await sRes.text();
-                  if (cache) {
-                    await cache.put(new Request(scriptPath), new Response(sText, {
-                      headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=2592000' }
-                    })).catch(() => {});
-                  }
-                  const jsBlob = new Blob([sText], { type: 'application/javascript' });
-                  const jsBlobUrl = URL.createObjectURL(jsBlob);
-                  standaloneHtml = standaloneHtml.replace(match[0], `<script type="module" crossorigin src="${jsBlobUrl}"><\/script>`);
-                  log(`Cached JavaScript bundle: ${scriptPath}`, 'success');
-                }
-              } catch (err) {}
-            }
 
-            const cssMatches = indexHtml.matchAll(/<link[^>]+href=["']([^"']+\.css)["'][^>]*>/gi);
-            for (const match of cssMatches) {
-              const cssPath = match[1];
-              try {
-                const cRes = await fetch(cssPath).catch(() => null);
-                if (cRes && cRes.ok) {
-                  const cText = await cRes.text();
-                  if (cache) {
-                    await cache.put(new Request(cssPath), new Response(cText, {
-                      headers: { 'Content-Type': 'text/css', 'Cache-Control': 'public, max-age=2592000' }
-                    })).catch(() => {});
-                  }
-                  standaloneHtml = standaloneHtml.replace(match[0], `<style>\n${cText}\n</style>`);
-                  log(`Cached CSS stylesheet: ${cssPath}`, 'success');
-                }
-              } catch (err) {}
-            }
+          // 2. Download game manifests and service worker from GitHub
+          const manifestFiles = [
+            'fnaf_2.json',
+            'fnaf_3.json',
+            'fnaf_4.json',
+            'fnaf_ps.json',
+            'fnaf_sl.json',
+            'fnaf_ucn.json',
+            'fnaf_w.json',
+            'hotline_miami.json',
+            'public/game-sw.js',
+            'index.html'
+          ];
 
+          let downloadedCount = 0;
+          for (const mPath of manifestFiles) {
             try {
-              localStorage.setItem('lowtiersite_site_html', standaloneHtml);
-            } catch (err) {}
+              const mResult = await fetchGitHubFile(mPath);
+              if (mResult && cache) {
+                const text = await mResult.res.text();
+                const mime = mPath.endsWith('.json') ? 'application/json' : (mPath.endsWith('.js') ? 'application/javascript' : 'text/html');
+                await cache.put(new Request(`/${mPath}`), new Response(text, {
+                  headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=2592000' }
+                })).catch(() => {});
+              }
+            } catch (e) {}
+            downloadedCount++;
+            const pct = 35 + Math.round((downloadedCount / manifestFiles.length) * 35);
+            actionBtn.textContent = `${pct}%`;
           }
-        } catch (e) {
-          log(`Asset caching notice: ${e.message}`, 'warn');
-        }
 
-        actionBtn.textContent = '60%';
+          actionBtn.textContent = '75%';
 
-        // 2. Download game metadata and JSON configs
-        const jsonFiles = [
-          'GameMetadata.json',
-          'public/game-sw.js',
-          'fnaf_2.json',
-          'fnaf_3.json',
-          'fnaf_4.json',
-          'fnaf_ps.json',
-          'fnaf_sl.json',
-          'fnaf_ucn.json',
-          'fnaf_w.json',
-          'hotline_miami.json'
-        ];
+          // 3. Generate and cache the self-contained preview portal
+          const portalHtml = generatePortalHtml(gamesList, metaJsonStr);
 
-        let jsonDone = 0;
-        for (let i = 0; i < jsonFiles.length; i++) {
-          const name = jsonFiles[i];
-          const pct = 60 + Math.round(((i + 1) / jsonFiles.length) * 35);
-          actionBtn.textContent = `${pct}%`;
+          if (cache) {
+            await cache.put(new Request('/index.html'), new Response(portalHtml, {
+              headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=2592000' }
+            })).catch(() => {});
+            await cache.put(new Request('/'), new Response(portalHtml, {
+              headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=2592000' }
+            })).catch(() => {});
+            if (metaJsonStr) {
+              await cache.put(new Request('/GameMetadata.json'), new Response(metaJsonStr, {
+                headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=2592000' }
+              })).catch(() => {});
+            }
+          }
 
           try {
-            let resp = await fetch(`./${name}`).catch(() => null) ||
-                       await fetch(`/${name}`).catch(() => null) ||
-                       await fetch(`${GITHUB_RAW_BASE}${name}`).catch(() => null) ||
-                       await fetch(`${JSDELIVR_CDN_BASE}${name}`).catch(() => null);
-
-            if (resp && resp.ok && cache) {
-              const blob = await resp.blob();
-              const mime = name.endsWith('.json') ? 'application/json' : name.endsWith('.js') ? 'application/javascript' : 'text/plain';
-
-              await cache.put(new Request(`/${name}`), new Response(blob.slice(), {
-                headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=2592000' }
-              })).catch(() => {});
-
-              await cache.put(new Request(`${GITHUB_RAW_BASE}${name}`), new Response(blob.slice(), {
-                headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=2592000' }
-              })).catch(() => {});
-
-              if (name === 'GameMetadata.json') {
-                try {
-                  const metaText = await blob.text();
-                  localStorage.setItem('lowtiersite_metadata', metaText);
-                } catch (err) {}
-              }
-              jsonDone++;
+            localStorage.setItem('lowtiersite_site_html', portalHtml);
+            if (metaJsonStr) {
+              localStorage.setItem('lowtiersite_metadata', metaJsonStr);
+              localStorage.setItem('lowtiersite_cached_games', metaJsonStr);
             }
           } catch (e) {}
+
+          actionBtn.textContent = '100%';
+
+          // Record cache timestamp (30-day retention)
+          const now = Date.now();
+          localStorage.setItem('lowtiersite_cache_time', now.toString());
+
+          log('GitHub site repository and games successfully downloaded and cached for 30 days!', 'success');
+          actionBtn.textContent = 'Enter';
+          actionBtn.className = 'btn enter';
+          actionBtn.disabled = false;
+          deleteBtn.disabled = false;
+        } catch (err) {
+          log(`Download notice: ${err.message}`, 'error');
+          actionBtn.textContent = 'Enter';
+          actionBtn.className = 'btn enter';
+          actionBtn.disabled = false;
+          deleteBtn.disabled = false;
         }
-
-        log(`Game metadata configs cached (${jsonDone}/${jsonFiles.length})`, 'info');
-
-        actionBtn.textContent = '100%';
-        localStorage.setItem('lowtiersite_cache_time', Date.now().toString());
-        log('Download complete! Site cached for 30 days.', 'success');
-
-        deleteBtn.disabled = false;
-        updateButtonState();
       }
 
       // Enter site and preview through iframe
       async function enterAboutBlank() {
         actionBtn.disabled = true;
-        actionBtn.textContent = 'Launching...';
+        actionBtn.textContent = 'Opening...';
 
-        const siteUrl = await resolvePreviewUrl();
-        log(`Launching site preview through iframe: ${siteUrl}`, 'info');
+        // Retrieve cached site HTML
+        let cachedHtml = '';
+        try {
+          cachedHtml = localStorage.getItem('lowtiersite_site_html') || '';
+        } catch (e) {}
+
+        if (!cachedHtml && 'caches' in window) {
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            const res = (await cache.match('/index.html')) || (await cache.match('/'));
+            if (res) cachedHtml = await res.text();
+          } catch (e) {}
+        }
+
+        if (!cachedHtml) {
+          // If not cached yet, generate from metadata or fallback
+          let games = [];
+          try {
+            const m = localStorage.getItem('lowtiersite_metadata');
+            if (m) games = JSON.parse(m);
+          } catch (e) {}
+          cachedHtml = generatePortalHtml(games, '');
+        }
+
+        log('Previewing cached LowTierSite via iframe', 'info');
 
         let win = null;
         try {
@@ -509,29 +904,33 @@
 <body>
   <iframe
     id="game-frame"
-    src="${siteUrl}"
     title="LowTierSite"
     allow="fullscreen; autoplay; gamepad; clipboard-read; clipboard-write; cross-origin-isolated"
   ></iframe>
 </body>
 </html>`);
             doc.close();
-            log('about:blank window successfully initialized with preview iframe', 'success');
+
+            const frame = doc.getElementById('game-frame');
+            if (frame) {
+              frame.srcdoc = cachedHtml;
+            }
+            log('about:blank window successfully loaded preview iframe', 'success');
           } catch (e) {
-            log(`about:blank doc.write notice: ${e.message}`, 'warn');
-            showInPagePreview(siteUrl);
+            log(`about:blank setup notice: ${e.message}`, 'warn');
+            showInPagePreview(cachedHtml);
           }
         } else {
-          // If popup is blocked by browser/Google Sites sandbox, preview directly in-page
+          // If popup is blocked by browser/sandbox, preview directly in-page
           log('Popup blocked. Launching fullscreen in-page preview iframe...', 'info');
-          showInPagePreview(siteUrl);
+          showInPagePreview(cachedHtml);
         }
 
         updateButtonState();
       }
 
       // Display in-page fullscreen preview iframe if popups are blocked
-      function showInPagePreview(url) {
+      function showInPagePreview(htmlContent) {
         let container = document.getElementById('inpage-preview-container');
         if (!container) {
           container = document.createElement('div');
@@ -553,7 +952,10 @@
           closeBtn.addEventListener('click', function() {
             container.style.display = 'none';
             const frame = document.getElementById('inpage-preview-frame');
-            if (frame) frame.src = 'about:blank';
+            if (frame) {
+              frame.srcdoc = '';
+              frame.src = 'about:blank';
+            }
           });
 
           headerBar.appendChild(titleSpan);
@@ -571,7 +973,7 @@
 
         const frame = document.getElementById('inpage-preview-frame');
         if (frame) {
-          frame.src = url;
+          frame.srcdoc = htmlContent;
         }
         container.style.display = 'flex';
       }
@@ -613,6 +1015,8 @@
           // 3. Clear LocalStorage keys
           localStorage.removeItem('lowtiersite_cache_time');
           localStorage.removeItem('lowtiersite_cached_games');
+          localStorage.removeItem('lowtiersite_site_html');
+          localStorage.removeItem('lowtiersite_metadata');
           const toRemove = [];
           for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -655,28 +1059,6 @@
         updateButtonState();
       }
 
-      // Inspect Cache
-      async function inspectCache() {
-        if (!('caches' in window)) {
-          log('CacheStorage not supported in this browser', 'warn');
-          return;
-        }
-        try {
-          const cache = await caches.open(CACHE_NAME);
-          const requests = await cache.keys();
-          log(`--- Cache Inspection (${requests.length} entries) ---`, 'info');
-          for (let i = 0; i < Math.min(requests.length, 25); i++) {
-            const r = requests[i];
-            log(`[#${i + 1}] ${r.url}`, 'info');
-          }
-          if (requests.length > 25) {
-            log(`... and ${requests.length - 25} more cached files.`, 'info');
-          }
-        } catch (e) {
-          log(`Inspect cache error: ${e.message}`, 'error');
-        }
-      }
-
       // Event Listeners
       actionBtn.addEventListener('click', function () {
         if (isCachedValid()) {
@@ -691,7 +1073,6 @@
       // Initialize
       log('LowTierSite Launcher initialized.', 'info');
       updateButtonState();
-      pingTarget(true);
     })();
   </script>
 </body>
