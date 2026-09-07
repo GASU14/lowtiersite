@@ -46,7 +46,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 24px 16px;
       user-select: none;
     }
 
@@ -54,27 +54,30 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 20px;
+      gap: 18px;
       text-align: center;
+      width: 100%;
+      max-width: 560px;
     }
 
     h1 {
-      font-size: 42px;
+      font-size: 40px;
       font-weight: 800;
       letter-spacing: -1px;
       color: #ffffff;
-      margin-bottom: 8px;
+      margin-bottom: 0px;
     }
 
     .btn-group {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      width: 100%;
     }
 
     .btn {
-      min-width: 180px;
+      width: 220px;
       padding: 14px 32px;
       font-size: 16px;
       font-weight: 600;
@@ -116,7 +119,7 @@
     }
 
     .btn-delete {
-      min-width: 180px;
+      width: 220px;
       padding: 10px 24px;
       font-size: 14px;
       font-weight: 500;
@@ -152,7 +155,10 @@
 <body>
 
   <div class="wrapper">
-    <h1 id="title">LowTierSite</h1>
+    <div>
+      <h1 id="title">LowTierSite</h1>
+    </div>
+
     <div class="btn-group">
       <button id="action-btn" class="btn">Download</button>
       <button id="delete-cache-btn" class="btn-delete">Delete Cache</button>
@@ -165,10 +171,130 @@
       const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
       const REPO_OWNER = 'GASU14';
       const REPO_NAME = 'lowtiersite';
-      const REPO_TREE_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/main?recursive=1`;
+      const REPO_BRANCH = 'main';
+      const REPO_TREE_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${REPO_BRANCH}?recursive=1`;
+      const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/`;
+      const JSDELIVR_CDN_BASE = `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}/`;
 
       const actionBtn = document.getElementById('action-btn');
       const deleteBtn = document.getElementById('delete-cache-btn');
+
+      const logHistory = [];
+
+      // Debug Logger
+      function log(msg, type = 'info') {
+        const time = new Date().toTimeString().split(' ')[0];
+        logHistory.push(`[${time}] [${type.toUpperCase()}] ${msg}`);
+
+        // Also output to browser console
+        if (type === 'error') console.error('[LowTierSite Launcher]', msg);
+        else if (type === 'warn') console.warn('[LowTierSite Launcher]', msg);
+        else console.log('[LowTierSite Launcher]', msg);
+      }
+
+      function escapeHtml(s) {
+        return (s + '').replace(/[&<>"']/g, function(m) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+        });
+      }
+
+      // Intercept errors for debug logs
+      window.addEventListener('error', function (e) {
+        log(`Uncaught error: ${e.message || 'Error'} at ${e.filename || ''}:${e.lineno || ''}`, 'error');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        const reason = e.reason && (e.reason.message || e.reason.toString()) || 'Unknown error';
+        log(`Unhandled rejection: ${reason}`, 'error');
+      });
+
+      // Get or construct the preview site URL from cache or origin
+      async function resolvePreviewUrl() {
+        // 1. Query parameter ?url= or ?target=
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const q = params.get('url') || params.get('target');
+          if (q && q.trim()) {
+            return q.trim();
+          }
+        } catch (e) {}
+
+        // 2. Saved user preference in localStorage
+        try {
+          const saved = localStorage.getItem('lowtiersite_target_url');
+          if (saved && saved.trim()) {
+            return saved.trim();
+          }
+        } catch (e) {}
+
+        // 3. Try to load cached site from localStorage or CacheStorage
+        try {
+          const localHtml = localStorage.getItem('lowtiersite_site_html');
+          if (localHtml && localHtml.includes('id="root"')) {
+            const blob = new Blob([localHtml], { type: 'text/html; charset=utf-8' });
+            return URL.createObjectURL(blob);
+          }
+
+          if ('caches' in window) {
+            const cache = await caches.open(CACHE_NAME);
+            const cachedRes = (await cache.match('/index.html')) || (await cache.match('index.html')) || (await cache.match('/'));
+            if (cachedRes) {
+              const htmlText = await cachedRes.text();
+              if (htmlText && htmlText.includes('id="root"')) {
+                const blob = new Blob([htmlText], { type: 'text/html; charset=utf-8' });
+                return URL.createObjectURL(blob);
+              }
+            }
+          }
+        } catch (e) {
+          log('Cache preview resolution notice: ' + e.message, 'warn');
+        }
+
+        // 4. If running on self host and NOT on Google Sites or sandboxed iframe
+        const origin = window.location.origin || '';
+        const isGoogleSites = origin.includes('sites.google.com') || origin.includes('googleusercontent.com');
+        const isHttp = origin.startsWith('http://') || origin.startsWith('https://');
+
+        if (!isGoogleSites && isHttp) {
+          return origin + '/';
+        }
+
+        // 5. Fallback to relative index.html
+        return './index.html';
+      }
+
+      // Ping repository connectivity to verify GitHub accessibility
+      async function pingTarget(silent = false) {
+        if (!silent) log(`Checking GitHub repository connectivity (${REPO_OWNER}/${REPO_NAME})...`, 'info');
+
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 6000);
+          
+          let ok = false;
+          try {
+            const res = await fetch(`${GITHUB_RAW_BASE}GameMetadata.json`, {
+              method: 'HEAD',
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            ok = res.ok;
+          } catch (netErr) {
+            clearTimeout(timer);
+            const metaRes = await fetch(`${JSDELIVR_CDN_BASE}GameMetadata.json`, {
+              method: 'HEAD'
+            }).catch(() => null);
+            if (metaRes && metaRes.ok) ok = true;
+          }
+
+          if (ok) {
+            if (!silent) log(`GitHub repository is accessible (${REPO_OWNER}/${REPO_NAME})`, 'success');
+          } else {
+            if (!silent) log(`GitHub repository ping notice: checking network`, 'warn');
+          }
+        } catch (err) {
+          if (!silent) log(`Target ping error: ${err.message}`, 'error');
+        }
+      }
 
       // Check if site is currently cached within the 30-day window
       function isCachedValid() {
@@ -190,157 +316,178 @@
         }
       }
 
-      // Download site repository and store into 30-day cache
+      // Download site repository and assets into 30-day cache
       async function downloadSite() {
         actionBtn.disabled = true;
         actionBtn.textContent = 'Connecting...';
         deleteBtn.disabled = true;
-
-        let files = [];
-        try {
-          const res = await fetch(REPO_TREE_URL);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.tree && Array.isArray(data.tree)) {
-              files = data.tree
-                .filter(i => i.type === 'blob')
-                .map(i => ({
-                  path: i.path,
-                  url: `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${i.path}`
-                }));
-            }
-          }
-        } catch (e) {}
-
-        const core = [
-          'index.html',
-          'GameMetadata.json',
-          'public/game-sw.js',
-          'src/App.tsx',
-          'src/main.tsx',
-          'src/types.ts',
-          'src/utils/cacheManager.ts',
-          'src/utils/githubDownloader.ts',
-          'src/components/GamePlayer.tsx',
-          'src/components/DownloadScreen.tsx',
-          'src/components/GameCard.tsx',
-          'src/components/Header.tsx',
-          'src/components/CacheManagerModal.tsx'
-        ];
-
-        for (const c of core) {
-          if (!files.find(f => f.path === c)) {
-            files.push({
-              path: c,
-              url: `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${c}`
-            });
-          }
-        }
+        log('Starting LowTierSite download...', 'info');
 
         let cache = null;
         if ('caches' in window) {
-          cache = await caches.open(CACHE_NAME);
+          try {
+            cache = await caches.open(CACHE_NAME);
+            log(`CacheStorage opened: ${CACHE_NAME}`, 'info');
+          } catch (e) {
+            log(`CacheStorage open notice: ${e.message}`, 'warn');
+          }
         }
 
-        const total = files.length;
-        let downloaded = 0;
+        // 1. Fetch site HTML and bundled assets from local server or relative paths
+        try {
+          actionBtn.textContent = '15%';
+          let indexHtml = '';
+          const htmlRes = await fetch('./index.html').catch(() => null) || await fetch('/index.html').catch(() => null);
+          if (htmlRes && htmlRes.ok) {
+            indexHtml = await htmlRes.text();
+            log('Fetched site index.html', 'success');
 
-        for (let i = 0; i < total; i++) {
-          const file = files[i];
-          const pct = Math.round(((i + 1) / total) * 100);
+            if (cache) {
+              await cache.put(new Request('/index.html'), new Response(indexHtml, {
+                headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, max-age=2592000' }
+              })).catch(() => {});
+              await cache.put(new Request('/'), new Response(indexHtml, {
+                headers: { 'Content-Type': 'text/html', 'Cache-Control': 'public, max-age=2592000' }
+              })).catch(() => {});
+            }
+          }
+
+          actionBtn.textContent = '35%';
+          // Extract and cache referenced scripts and stylesheets
+          let standaloneHtml = indexHtml;
+          if (indexHtml) {
+            const scriptMatches = indexHtml.matchAll(/<script[^>]+src=["']([^"']+\.js)["'][^>]*><\/script>/gi);
+            for (const match of scriptMatches) {
+              const scriptPath = match[1];
+              try {
+                const sRes = await fetch(scriptPath).catch(() => null);
+                if (sRes && sRes.ok) {
+                  const sText = await sRes.text();
+                  if (cache) {
+                    await cache.put(new Request(scriptPath), new Response(sText, {
+                      headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=2592000' }
+                    })).catch(() => {});
+                  }
+                  const jsBlob = new Blob([sText], { type: 'application/javascript' });
+                  const jsBlobUrl = URL.createObjectURL(jsBlob);
+                  standaloneHtml = standaloneHtml.replace(match[0], `<script type="module" crossorigin src="${jsBlobUrl}"><\/script>`);
+                  log(`Cached JavaScript bundle: ${scriptPath}`, 'success');
+                }
+              } catch (err) {}
+            }
+
+            const cssMatches = indexHtml.matchAll(/<link[^>]+href=["']([^"']+\.css)["'][^>]*>/gi);
+            for (const match of cssMatches) {
+              const cssPath = match[1];
+              try {
+                const cRes = await fetch(cssPath).catch(() => null);
+                if (cRes && cRes.ok) {
+                  const cText = await cRes.text();
+                  if (cache) {
+                    await cache.put(new Request(cssPath), new Response(cText, {
+                      headers: { 'Content-Type': 'text/css', 'Cache-Control': 'public, max-age=2592000' }
+                    })).catch(() => {});
+                  }
+                  standaloneHtml = standaloneHtml.replace(match[0], `<style>\n${cText}\n</style>`);
+                  log(`Cached CSS stylesheet: ${cssPath}`, 'success');
+                }
+              } catch (err) {}
+            }
+
+            try {
+              localStorage.setItem('lowtiersite_site_html', standaloneHtml);
+            } catch (err) {}
+          }
+        } catch (e) {
+          log(`Asset caching notice: ${e.message}`, 'warn');
+        }
+
+        actionBtn.textContent = '60%';
+
+        // 2. Download game metadata and JSON configs
+        const jsonFiles = [
+          'GameMetadata.json',
+          'public/game-sw.js',
+          'fnaf_2.json',
+          'fnaf_3.json',
+          'fnaf_4.json',
+          'fnaf_ps.json',
+          'fnaf_sl.json',
+          'fnaf_ucn.json',
+          'fnaf_w.json',
+          'hotline_miami.json'
+        ];
+
+        let jsonDone = 0;
+        for (let i = 0; i < jsonFiles.length; i++) {
+          const name = jsonFiles[i];
+          const pct = 60 + Math.round(((i + 1) / jsonFiles.length) * 35);
           actionBtn.textContent = `${pct}%`;
 
           try {
-            let resp = await fetch(file.url).catch(() => null);
-            if (!resp || !resp.ok) {
-              const cdn = `https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@main/${file.path}`;
-              resp = await fetch(cdn).catch(() => null);
-            }
-            if (!resp || !resp.ok) {
-              resp = await fetch(`/${file.path}`).catch(() => null);
-            }
+            let resp = await fetch(`./${name}`).catch(() => null) ||
+                       await fetch(`/${name}`).catch(() => null) ||
+                       await fetch(`${GITHUB_RAW_BASE}${name}`).catch(() => null) ||
+                       await fetch(`${JSDELIVR_CDN_BASE}${name}`).catch(() => null);
 
             if (resp && resp.ok && cache) {
               const blob = await resp.blob();
-              await cache.put(new Request(file.url), new Response(blob, {
-                headers: {
-                  'Content-Type': resp.headers.get('Content-Type') || 'text/plain',
-                  'Cache-Control': 'public, max-age=2592000'
-                }
-              }));
-              downloaded++;
-            }
-          } catch (e) {}
-        }
+              const mime = name.endsWith('.json') ? 'application/json' : name.endsWith('.js') ? 'application/javascript' : 'text/plain';
 
-        // Cache local origin entrypoints and Vite assets so app works offline
-        if (cache) {
-          try {
-            const entrypoints = ['/', '/index.html', '/index2.html', '/GameMetadata.json'];
-            const viteAssetsToCache = new Set();
+              await cache.put(new Request(`/${name}`), new Response(blob.slice(), {
+                headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=2592000' }
+              })).catch(() => {});
 
-            for (const ep of entrypoints) {
-              const r = await fetch(ep).catch(() => null);
-              if (r && r.ok) {
-                const text = await r.clone().text().catch(() => '');
-                const matches = text.matchAll(/(?:src|href)=["']([^"']*\.(?:js|css|wasm|png|svg|json))["']/gi);
-                for (const match of matches) {
-                  const assetUrl = match[1];
-                  if (assetUrl.startsWith('/') && !assetUrl.startsWith('//')) {
-                    viteAssetsToCache.add(assetUrl);
-                  }
-                }
+              await cache.put(new Request(`${GITHUB_RAW_BASE}${name}`), new Response(blob.slice(), {
+                headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=2592000' }
+              })).catch(() => {});
 
-                const b = await r.blob();
-                await cache.put(new Request(ep), new Response(b, {
-                  headers: { 'Content-Type': r.headers.get('Content-Type') || 'text/html' }
-                }));
+              if (name === 'GameMetadata.json') {
+                try {
+                  const metaText = await blob.text();
+                  localStorage.setItem('lowtiersite_metadata', metaText);
+                } catch (err) {}
               }
-            }
-
-            for (const assetUrl of viteAssetsToCache) {
-              try {
-                const assetResp = await fetch(assetUrl).catch(() => null);
-                if (assetResp && assetResp.ok) {
-                  const blob = await assetResp.blob();
-                  await cache.put(new Request(assetUrl), new Response(blob, {
-                    headers: {
-                      'Content-Type': assetResp.headers.get('Content-Type') || 'application/javascript',
-                      'Cache-Control': 'public, max-age=2592000'
-                    }
-                  }));
-                }
-              } catch (e) {}
+              jsonDone++;
             }
           } catch (e) {}
         }
 
-        // Save 30-day cache timestamp
+        log(`Game metadata configs cached (${jsonDone}/${jsonFiles.length})`, 'info');
+
+        actionBtn.textContent = '100%';
         localStorage.setItem('lowtiersite_cache_time', Date.now().toString());
+        log('Download complete! Site cached for 30 days.', 'success');
 
         deleteBtn.disabled = false;
         updateButtonState();
       }
 
-      // Enter site via about:blank with full game cache support
-      function enterAboutBlank() {
-        const siteUrl = window.location.origin + '/';
-        const win = window.open('about:blank', '_blank');
+      // Enter site and preview through iframe
+      async function enterAboutBlank() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Launching...';
 
-        if (!win) {
-          window.location.href = siteUrl;
-          return;
+        const siteUrl = await resolvePreviewUrl();
+        log(`Launching site preview through iframe: ${siteUrl}`, 'info');
+
+        let win = null;
+        try {
+          win = window.open('about:blank', '_blank');
+        } catch (err) {
+          log(`window.open was blocked: ${err.message}`, 'warn');
         }
 
-        try {
-          const doc = win.document;
-          doc.open();
-          doc.write(`<!DOCTYPE html>
+        if (win) {
+          try {
+            const doc = win.document;
+            doc.open();
+            doc.write(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>LowTierSite</title>
-  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='.9em'%20font-size='90'%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     html, body {
@@ -349,7 +496,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #000;
+      background: #0a0a0a;
     }
     iframe {
       border: 0;
@@ -361,22 +508,79 @@
 </head>
 <body>
   <iframe
+    id="game-frame"
     src="${siteUrl}"
     title="LowTierSite"
     allow="fullscreen; autoplay; gamepad; clipboard-read; clipboard-write; cross-origin-isolated"
   ></iframe>
 </body>
 </html>`);
-          doc.close();
-        } catch (e) {
-          window.location.href = siteUrl;
+            doc.close();
+            log('about:blank window successfully initialized with preview iframe', 'success');
+          } catch (e) {
+            log(`about:blank doc.write notice: ${e.message}`, 'warn');
+            showInPagePreview(siteUrl);
+          }
+        } else {
+          // If popup is blocked by browser/Google Sites sandbox, preview directly in-page
+          log('Popup blocked. Launching fullscreen in-page preview iframe...', 'info');
+          showInPagePreview(siteUrl);
         }
+
+        updateButtonState();
+      }
+
+      // Display in-page fullscreen preview iframe if popups are blocked
+      function showInPagePreview(url) {
+        let container = document.getElementById('inpage-preview-container');
+        if (!container) {
+          container = document.createElement('div');
+          container.id = 'inpage-preview-container';
+          container.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;background:#0a0a0a;display:flex;flex-direction:column;';
+
+          const headerBar = document.createElement('div');
+          headerBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#141414;border-bottom:1px solid #222;';
+
+          const titleSpan = document.createElement('span');
+          titleSpan.textContent = 'LowTierSite Preview';
+          titleSpan.style.cssText = 'font-size:13px;font-weight:600;color:#aaa;font-family:sans-serif;letter-spacing:0.5px;';
+
+          const closeBtn = document.createElement('button');
+          closeBtn.textContent = '✕ Close Preview';
+          closeBtn.style.cssText = 'background:#222;color:#eee;border:1px solid #333;padding:5px 12px;border-radius:4px;font-size:12px;cursor:pointer;font-family:sans-serif;transition:background 0.2s;';
+          closeBtn.addEventListener('mouseenter', () => closeBtn.style.background = '#333');
+          closeBtn.addEventListener('mouseleave', () => closeBtn.style.background = '#222');
+          closeBtn.addEventListener('click', function() {
+            container.style.display = 'none';
+            const frame = document.getElementById('inpage-preview-frame');
+            if (frame) frame.src = 'about:blank';
+          });
+
+          headerBar.appendChild(titleSpan);
+          headerBar.appendChild(closeBtn);
+
+          const frame = document.createElement('iframe');
+          frame.id = 'inpage-preview-frame';
+          frame.style.cssText = 'width:100%;height:100%;border:none;flex:1;display:block;';
+          frame.allow = 'fullscreen; autoplay; gamepad; clipboard-read; clipboard-write; cross-origin-isolated';
+
+          container.appendChild(headerBar);
+          container.appendChild(frame);
+          document.body.appendChild(container);
+        }
+
+        const frame = document.getElementById('inpage-preview-frame');
+        if (frame) {
+          frame.src = url;
+        }
+        container.style.display = 'flex';
       }
 
       // Delete all cached site files, IndexedDB games, and cache timestamps
       async function deleteCache() {
         deleteBtn.disabled = true;
         deleteBtn.textContent = 'Clearing...';
+        log('Clearing CacheStorage, IndexedDB, and LocalStorage...', 'info');
 
         try {
           // 1. Delete CacheStorage caches
@@ -384,6 +588,7 @@
             const keys = await caches.keys();
             for (const key of keys) {
               await caches.delete(key);
+              log(`Deleted CacheStorage: ${key}`, 'info');
             }
           }
 
@@ -395,6 +600,7 @@
                 for (const dbInfo of dbs) {
                   if (dbInfo.name) {
                     indexedDB.deleteDatabase(dbInfo.name);
+                    log(`Deleted IndexedDB: ${dbInfo.name}`, 'info');
                   }
                 }
               } catch (e) {}
@@ -424,10 +630,12 @@
               const regs = await navigator.serviceWorker.getRegistrations();
               for (const r of regs) {
                 await r.unregister();
+                log('Unregistered ServiceWorker registration', 'info');
               }
             } catch (e) {}
           }
 
+          log('Cache completely cleared.', 'success');
           deleteBtn.textContent = 'Cache Deleted';
           setTimeout(function () {
             deleteBtn.textContent = 'Delete Cache';
@@ -435,6 +643,7 @@
             updateButtonState();
           }, 1200);
         } catch (err) {
+          log(`Error clearing cache: ${err.message}`, 'error');
           deleteBtn.textContent = 'Error';
           setTimeout(function () {
             deleteBtn.textContent = 'Delete Cache';
@@ -446,6 +655,29 @@
         updateButtonState();
       }
 
+      // Inspect Cache
+      async function inspectCache() {
+        if (!('caches' in window)) {
+          log('CacheStorage not supported in this browser', 'warn');
+          return;
+        }
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          const requests = await cache.keys();
+          log(`--- Cache Inspection (${requests.length} entries) ---`, 'info');
+          for (let i = 0; i < Math.min(requests.length, 25); i++) {
+            const r = requests[i];
+            log(`[#${i + 1}] ${r.url}`, 'info');
+          }
+          if (requests.length > 25) {
+            log(`... and ${requests.length - 25} more cached files.`, 'info');
+          }
+        } catch (e) {
+          log(`Inspect cache error: ${e.message}`, 'error');
+        }
+      }
+
+      // Event Listeners
       actionBtn.addEventListener('click', function () {
         if (isCachedValid()) {
           enterAboutBlank();
@@ -456,7 +688,10 @@
 
       deleteBtn.addEventListener('click', deleteCache);
 
+      // Initialize
+      log('LowTierSite Launcher initialized.', 'info');
       updateButtonState();
+      pingTarget(true);
     })();
   </script>
 </body>

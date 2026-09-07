@@ -353,6 +353,12 @@ app.get(['/index2', '/index2.html', '/download', '/download.html'], (req, res) =
   return res.sendFile(rootFile);
 });
 
+// Serve dist/assets statically if built assets exist
+const distAssetsPath = path.join(process.cwd(), 'dist', 'assets');
+if (fs.existsSync(distAssetsPath)) {
+  app.use('/assets', express.static(distAssetsPath));
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

@@ -22,13 +22,6 @@
     "genre": "Adventure"
   },
   {
-    "name": "Terraria",
-    "repo": "https://github.com/G4SUS/terraria-lowtiersite.git",
-    "thumbnail": "https://assets1.ignimgs.com/2019/01/17/terraria---button-1547745886957.jpg?crop=1%3A1%2Csmart&format=jpg&auto=webp&quality=80",
-    "badge": "Low",
-    "genre": "Adventure"
-  },
-  {
     "name": "Egalercraft",
     "repo": "https://github.com/lDEVinux/eaglercraft.git",
     "thumbnail": "https://cdn2.steamgriddb.com/icon_thumb/349319c989f70ac97c3824689547bf5d.png",
